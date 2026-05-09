@@ -4,11 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
-	"encoding/base32"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"regexp"
@@ -297,18 +297,8 @@ func (s *Server) writeIndexOrNotFound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	fmt.Fprintf(w, "rgrok server\n\n")
-	if len(s.tunnels) == 0 {
-		fmt.Fprintf(w, "No active tunnels.\n")
-		return
-	}
-	fmt.Fprintf(w, "Active tunnels:\n")
-	for _, t := range s.tunnels {
-		fmt.Fprintf(w, "  %s -> %s\n", t.id, t.publicURL)
-	}
+	fmt.Fprintln(w, "Nothing to see here. The tunnels are doing tunnel things elsewhere.")
 }
 
 func (s *Server) validToken(token string) bool {
@@ -431,11 +421,71 @@ func (t *tunnel) failPending() {
 }
 
 func randomID() string {
-	var b [5]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
+	adjectives := []string{
+		"airconditioned",
+		"blanket",
+		"campus",
+		"chicken",
+		"cosmic",
+		"deans",
+		"dreamatorium",
+		"greendale",
+		"human",
+		"paintball",
+		"pillow",
+		"remedial",
+		"study",
 	}
-	return strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b[:]))
+	nouns := []string{
+		"annex",
+		"beetle",
+		"changnesia",
+		"dean",
+		"diorama",
+		"inspector",
+		"meowmeow",
+		"pelton",
+		"popper",
+		"room",
+		"timeline",
+		"troy",
+		"winger",
+	}
+	suffixes := []string{
+		"club",
+		"college",
+		"committee",
+		"fort",
+		"group",
+		"heist",
+		"night",
+		"party",
+		"quest",
+		"semester",
+		"table",
+		"year",
+	}
+
+	name := strings.Join([]string{
+		randomChoice(adjectives),
+		randomChoice(nouns),
+		randomChoice(suffixes),
+	}, "-")
+	if nameRE.MatchString(name) {
+		return name
+	}
+	return fmt.Sprintf("greendale-%d", time.Now().UnixNano())
+}
+
+func randomChoice(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(values))))
+	if err != nil {
+		return values[time.Now().UnixNano()%int64(len(values))]
+	}
+	return values[n.Int64()]
 }
 
 func writeClose(conn *websocket.Conn, code int, text string) {

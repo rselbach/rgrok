@@ -15,7 +15,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/rgrok
+StateDirectory=rgrok
 
 [Install]
 WantedBy=multi-user.target

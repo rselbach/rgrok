@@ -64,7 +64,7 @@ func runServer(args []string, log *slog.Logger) error {
 
 func runConnect(args []string, log *slog.Logger) error {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
-	serverURL := fs.String("server", "ws://localhost:7000/api/connect", "rgrok server WebSocket URL")
+	serverURL := fs.String("server", "wss://rgrok.rselbach.com/api/connect", "rgrok server WebSocket URL")
 	name := fs.String("name", "", "requested tunnel subdomain/name")
 	token := fs.String("token", "", "shared auth token")
 	localHost := fs.String("local-host", "127.0.0.1", "local host to forward to")
