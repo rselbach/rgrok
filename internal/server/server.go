@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -18,32 +17,47 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/rselbach/rgrok/internal/auth"
 	"github.com/rselbach/rgrok/internal/protocol"
 )
 
 type Config struct {
-	Addr         string
-	Domain       string
-	PublicScheme string
-	ConnectPath  string
-	AuthToken    string
-	MaxBodyBytes int64
-	Logger       *slog.Logger
+	Addr               string
+	Domain             string
+	PublicScheme       string
+	ConnectPath        string
+	DataPath           string
+	GitHubClientID     string
+	GitHubClientSecret string
+	MaxBodyBytes       int64
+	Logger             *slog.Logger
 }
 
 type Server struct {
-	cfg Config
+	cfg    Config
+	store  *Store
+	github auth.GitHubClient
 
-	mu      sync.RWMutex
-	tunnels map[string]*tunnel
+	mu           sync.RWMutex
+	tunnels      map[string]*tunnel
+	deviceLogins map[string]*deviceLogin
 
 	nextStream atomic.Uint64
+}
+
+type deviceLogin struct {
+	ID         string
+	DeviceCode string
+	ExpiresAt  time.Time
+	Interval   int
+	LastPoll   time.Time
 }
 
 type tunnel struct {
 	id        string
 	host      string
 	publicURL string
+	owner     string
 	conn      *websocket.Conn
 	send      chan protocol.Message
 	done      chan struct{}
@@ -66,7 +80,7 @@ var (
 	}
 )
 
-func New(cfg Config) *Server {
+func New(cfg Config) (*Server, error) {
 	if cfg.Addr == "" {
 		cfg.Addr = ":7000"
 	}
@@ -79,6 +93,9 @@ func New(cfg Config) *Server {
 	if cfg.ConnectPath == "" {
 		cfg.ConnectPath = "/api/connect"
 	}
+	if cfg.DataPath == "" {
+		cfg.DataPath = "rgrok.json"
+	}
 	if cfg.MaxBodyBytes <= 0 {
 		cfg.MaxBodyBytes = 32 << 20
 	}
@@ -89,19 +106,46 @@ func New(cfg Config) *Server {
 	cfg.Domain = strings.TrimPrefix(strings.TrimPrefix(cfg.Domain, "https://"), "http://")
 	cfg.Domain = strings.TrimRight(cfg.Domain, "/")
 
-	return &Server{
-		cfg:     cfg,
-		tunnels: make(map[string]*tunnel),
+	store, err := OpenStore(cfg.DataPath)
+	if err != nil {
+		return nil, err
 	}
+
+	return &Server{
+		cfg:          cfg,
+		store:        store,
+		github:       auth.GitHubClient{ClientID: cfg.GitHubClientID, ClientSecret: cfg.GitHubClientSecret},
+		tunnels:      make(map[string]*tunnel),
+		deviceLogins: make(map[string]*deviceLogin),
+	}, nil
 }
 
 func (s *Server) Run() error {
 	mux := http.NewServeMux()
-	mux.HandleFunc(s.cfg.ConnectPath, s.handleConnect)
+	mux.HandleFunc(s.cfg.ConnectPath, s.baseHostOnly(s.handleConnect))
+	mux.HandleFunc("/api/login/device/start", s.baseHostOnly(s.handleDeviceLoginStart))
+	mux.HandleFunc("/api/login/device/poll", s.baseHostOnly(s.handleDeviceLoginPoll))
+	mux.HandleFunc("/login/github", s.baseHostOnly(s.handleGitHubLogin))
+	mux.HandleFunc("/auth/github/callback", s.baseHostOnly(s.handleGitHubCallback))
+	mux.HandleFunc("/logout", s.baseHostOnly(s.handleLogout))
+	mux.HandleFunc("/dashboard", s.baseHostOnly(s.handleDashboard))
+	mux.HandleFunc("/dashboard/users/add", s.baseHostOnly(s.handleAddUser))
+	mux.HandleFunc("/dashboard/users/delete", s.baseHostOnly(s.handleDeleteUser))
+	mux.HandleFunc("/dashboard/tunnels/disconnect", s.baseHostOnly(s.handleDisconnectTunnel))
 	mux.HandleFunc("/", s.handlePublic)
 
 	s.cfg.Logger.Info("rgrok server listening", "addr", s.cfg.Addr, "domain", s.cfg.Domain, "connect_path", s.cfg.ConnectPath)
 	return http.ListenAndServe(s.cfg.Addr, mux)
+}
+
+func (s *Server) baseHostOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !sameHost(r.Host, s.cfg.Domain) {
+			s.handlePublic(w, r)
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -126,8 +170,10 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		writeClose(conn, websocket.CloseProtocolError, "expected register_tunnel")
 		return
 	}
-	if !s.validToken(reg.AuthToken) {
-		writeClose(conn, websocket.ClosePolicyViolation, "invalid auth token")
+
+	clientToken, ok := s.store.ClientToken(reg.AuthToken)
+	if !ok {
+		writeClose(conn, websocket.ClosePolicyViolation, "invalid rgrok login token")
 		return
 	}
 
@@ -142,6 +188,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		id:        id,
 		host:      host,
 		publicURL: s.cfg.PublicScheme + "://" + host,
+		owner:     clientToken.Login,
 		conn:      conn,
 		send:      make(chan protocol.Message, 64),
 		done:      make(chan struct{}),
@@ -154,7 +201,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.unregisterTunnel(t)
 
-	s.cfg.Logger.Info("tunnel connected", "id", t.id, "host", t.host, "local_port", reg.LocalPort)
+	s.cfg.Logger.Info("tunnel connected", "id", t.id, "host", t.host, "owner", t.owner, "local_port", reg.LocalPort)
 
 	writerDone := make(chan struct{})
 	go func() {
@@ -192,7 +239,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == s.cfg.ConnectPath {
+	if r.URL.Path == s.cfg.ConnectPath && sameHost(r.Host, s.cfg.Domain) {
 		http.NotFound(w, r)
 		return
 	}
@@ -287,25 +334,13 @@ func (s *Server) tunnelForHost(host string) *tunnel {
 
 func (s *Server) writeIndexOrNotFound(w http.ResponseWriter, r *http.Request) {
 	host := strings.ToLower(r.Host)
-	if host != strings.ToLower(s.cfg.Domain) {
-		if withoutPort, _, err := net.SplitHostPort(host); err == nil && withoutPort == strings.ToLower(s.cfg.Domain) {
-			host = withoutPort
-		}
-	}
-	if host != strings.ToLower(s.cfg.Domain) {
+	if !sameHost(host, s.cfg.Domain) {
 		http.NotFound(w, r)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	fmt.Fprintln(w, "Nothing to see here. The tunnels are doing tunnel things elsewhere.")
-}
-
-func (s *Server) validToken(token string) bool {
-	if s.cfg.AuthToken == "" {
-		return true
-	}
-	return subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.AuthToken)) == 1
 }
 
 func (s *Server) chooseID(requested string) (string, error) {
@@ -530,4 +565,16 @@ func schemeFromRequest(r *http.Request) string {
 		return "https"
 	}
 	return "http"
+}
+
+func sameHost(a, b string) bool {
+	a = strings.ToLower(a)
+	b = strings.ToLower(b)
+	if a == b {
+		return true
+	}
+	if withoutPort, _, err := net.SplitHostPort(a); err == nil {
+		return withoutPort == b
+	}
+	return false
 }

@@ -9,7 +9,13 @@ to a local port.
 Start the server:
 
 ```sh
-go run ./cmd/rgrok server --addr :7000 --domain localhost:7000
+go run ./cmd/rgrok server --addr :7000 --domain localhost:7000 --github-client-id "$RGROK_GITHUB_CLIENT_ID" --github-client-secret "$RGROK_GITHUB_CLIENT_SECRET"
+```
+
+Log in with GitHub:
+
+```sh
+go run ./cmd/rgrok login --server http://localhost:7000
 ```
 
 Connect a local app:
@@ -32,25 +38,50 @@ http://demo.localhost:7000
 
 ## Behind Caddy and Cloudflare
 
+Create a GitHub OAuth app with:
+
+- Homepage URL: `https://rgrok.rselbach.com`
+- Authorization callback URL: `https://rgrok.rselbach.com/auth/github/callback`
+- Device flow enabled
+
 Run the rgrok server on a private local port:
 
 ```sh
-rgrok server --addr 127.0.0.1:7000 --domain rgrok.example.com --scheme https --auth-token "$RGROK_TOKEN"
+rgrok server --addr 127.0.0.1:7000 --domain rgrok.rselbach.com --scheme https --data /var/lib/rgrok/rgrok.json --github-client-id "$RGROK_GITHUB_CLIENT_ID" --github-client-secret "$RGROK_GITHUB_CLIENT_SECRET"
 ```
 
 Use a Caddy site that forwards the apex and wildcard tunnel hosts:
 
 ```caddyfile
-rgrok.example.com, *.rgrok.example.com {
+rgrok.rselbach.com, *.rgrok.rselbach.com {
 	reverse_proxy 127.0.0.1:7000
 }
+```
+
+Log in once on the client:
+
+```sh
+rgrok login --server https://rgrok.rselbach.com
 ```
 
 Connect a client:
 
 ```sh
-rgrok connect 1234 --server wss://rgrok.example.com/api/connect --token "$RGROK_TOKEN"
+rgrok connect 1234 --server wss://rgrok.rselbach.com/api/connect
 ```
+
+For service-style clients, set `RGROK_CONFIG` while running `rgrok login` to
+write the token to a predictable file:
+
+```sh
+sudo env RGROK_CONFIG=/etc/rgrok/rgrok-client@demo.json rgrok login --server https://rgrok.rselbach.com
+sudo chown root:root /etc/rgrok/rgrok-client@demo.json
+sudo chmod 0600 /etc/rgrok/rgrok-client@demo.json
+```
+
+The server stores its whitelist, sessions, and default admin user in the JSON
+file passed with `--data`. The initial whitelist contains `rselbach` as an
+admin. The dashboard is available at `https://rgrok.rselbach.com/dashboard`.
 
 Sample deployment files for `rgrok.rselbach.com` live in `deploy/`:
 

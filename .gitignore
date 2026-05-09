@@ -8,6 +8,8 @@ coverage.*
 # Local environment overrides
 .env
 *.local
+rgrok.json
+rgrok.json.tmp
 
 # OS/editor noise
 .DS_Store

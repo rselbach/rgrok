@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/rgrok/rgrok-client@%i.env
-ExecStart=/usr/local/bin/rgrok connect ${RGROK_LOCAL_PORT} --server ${RGROK_SERVER} --token ${RGROK_TOKEN} --name ${RGROK_NAME}
+ExecStart=/usr/local/bin/rgrok connect ${RGROK_LOCAL_PORT} --server ${RGROK_SERVER} --name ${RGROK_NAME}
 Restart=always
 RestartSec=5s
 NoNewPrivileges=true
