@@ -529,6 +529,28 @@ func TestProtocolTypesUnified(t *testing.T) {
 	_ = protocol.DevicePollResponse{Status: "pending"}
 }
 
+func TestResponseWriterImplementsHijackerAndFlusher(t *testing.T) {
+	r := require.New(t)
+
+	rec := httptest.NewRecorder()
+	rw := &responseWriter{ResponseWriter: rec}
+
+	_, ok := interface{}(rw).(http.Hijacker)
+	r.True(ok, "responseWriter should implement http.Hijacker")
+
+	_, ok = interface{}(rw).(http.Flusher)
+	r.True(ok, "responseWriter should implement http.Flusher")
+}
+
+func TestRandomIDIsAlwaysValid(t *testing.T) {
+	for range 200 {
+		id := randomID()
+		if !nameRE.MatchString(id) {
+			t.Fatalf("randomID generated invalid DNS label %q", id)
+		}
+	}
+}
+
 func TestEndToEndTunnel(t *testing.T) {
 	r := require.New(t)
 

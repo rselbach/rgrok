@@ -124,3 +124,31 @@ func TestIsTerminal(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleRequestSanitizesErrors(t *testing.T) {
+	// Use a port that is very unlikely to be open so the request fails.
+	c := New(Config{
+		LocalHost:    "127.0.0.1",
+		LocalPort:    1,
+		MaxBodyBytes: 32 << 20,
+	})
+
+	send := make(chan protocol.Message, 1)
+	done := make(chan struct{})
+
+	msg := protocol.Message{
+		Type:     protocol.TypeRequest,
+		StreamID: 1,
+		Method:   http.MethodGet,
+		Path:     "/",
+	}
+
+	c.handleRequest(msg, send, done)
+
+	resp := <-send
+	r := require.New(t)
+	r.Equal(protocol.TypeResponse, resp.Type)
+	r.Equal("failed to reach local application", resp.Error)
+	r.NotContains(resp.Error, "refused")
+	r.NotContains(resp.Error, "127.0.0.1")
+}

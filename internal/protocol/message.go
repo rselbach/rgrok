@@ -2,6 +2,8 @@ package protocol
 
 import "net/http"
 
+const MaxBodyBytesDefault = 32 << 20
+
 const (
 	TypeRegisterTunnel   = "register_tunnel"
 	TypeTunnelRegistered = "tunnel_registered"

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	_ "embed"
@@ -29,7 +30,7 @@ import (
 )
 
 const (
-	maxBodyBytesDefault      = 32 << 20
+	maxBodyBytesDefault      = protocol.MaxBodyBytesDefault
 	pingInterval             = 25 * time.Second
 	writeTimeout             = 10 * time.Second
 	closeWriteTimeout        = 2 * time.Second
@@ -226,6 +227,21 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 		w.WriteHeader(http.StatusOK)
 	}
 	return w.ResponseWriter.Write(b)
+}
+
+func (w *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer does not support hijacking")
+	}
+	return h.Hijack()
+}
+
+func (w *responseWriter) Flush() {
+	f, ok := w.ResponseWriter.(http.Flusher)
+	if ok {
+		f.Flush()
+	}
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -683,10 +699,7 @@ func randomID() string {
 		randomChoice(nouns),
 		randomChoice(suffixes),
 	}, "-")
-	if nameRE.MatchString(name) {
-		return name
-	}
-	return fmt.Sprintf("greendale-%d", time.Now().UnixNano())
+	return name
 }
 
 func randomChoice(values []string) string {

@@ -244,7 +244,8 @@ func (c *Client) handleRequest(msg protocol.Message, send chan<- protocol.Messag
 
 	req, err := http.NewRequestWithContext(context.Background(), msg.Method, localURL+path, bytes.NewReader(msg.Body))
 	if err != nil {
-		resp.Error = err.Error()
+		c.cfg.Logger.Warn("local forward failed", "error", err)
+		resp.Error = "failed to reach local application"
 		select {
 		case send <- resp:
 		case <-done:
@@ -260,7 +261,8 @@ func (c *Client) handleRequest(msg protocol.Message, send chan<- protocol.Messag
 
 	localResp, err := c.httpClient.Do(req)
 	if err != nil {
-		resp.Error = err.Error()
+		c.cfg.Logger.Warn("local forward failed", "error", err)
+		resp.Error = "failed to reach local application"
 		select {
 		case send <- resp:
 		case <-done:
@@ -271,7 +273,8 @@ func (c *Client) handleRequest(msg protocol.Message, send chan<- protocol.Messag
 
 	body, err := io.ReadAll(io.LimitReader(localResp.Body, c.cfg.MaxBodyBytes+1))
 	if err != nil {
-		resp.Error = err.Error()
+		c.cfg.Logger.Warn("local forward failed", "error", err)
+		resp.Error = "failed to read local response"
 		select {
 		case send <- resp:
 		case <-done:

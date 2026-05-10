@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"time"
 )
 
@@ -251,7 +250,6 @@ func (c GitHubClient) postForm(ctx context.Context, endpoint string, form url.Va
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Content-Length", strconv.Itoa(len(form.Encode())))
 	req.Header.Set("User-Agent", "rgrok")
 
 	resp, err := c.client().Do(req)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rselbach/rgrok/internal/client"
+	"github.com/rselbach/rgrok/internal/protocol"
 	"github.com/rselbach/rgrok/internal/server"
 )
 
@@ -58,7 +59,7 @@ func runServer(args []string, log *slog.Logger) error {
 	dataPath := fs.String("data", "rgrok.json", "path to persistent server data")
 	githubClientID := fs.String("github-client-id", os.Getenv("RGROK_GITHUB_CLIENT_ID"), "GitHub OAuth app client ID")
 	githubClientSecret := fs.String("github-client-secret", os.Getenv("RGROK_GITHUB_CLIENT_SECRET"), "GitHub OAuth app client secret")
-	maxBody := fs.Int64("max-body", 32<<20, "maximum request or response body bytes")
+	maxBody := fs.Int64("max-body", protocol.MaxBodyBytesDefault, "maximum request or response body bytes")
 	maxTunnelsPerUser := fs.Int("max-tunnels-per-user", 0, "maximum tunnels per user (0 = default 5)")
 	logFormat := fs.String("log-format", "text", "log format: text or json")
 	if err := fs.Parse(args); err != nil {
@@ -160,7 +161,7 @@ func runConnect(args []string, log *slog.Logger) error {
 	token := fs.String("token", "", "GitHub access token override")
 	localHost := fs.String("local-host", "127.0.0.1", "local host to forward to")
 	preserveHost := fs.Bool("preserve-host", false, "send the public Host header to the local app")
-	maxBody := fs.Int64("max-body", 32<<20, "maximum request or response body bytes")
+	maxBody := fs.Int64("max-body", protocol.MaxBodyBytesDefault, "maximum request or response body bytes")
 
 	var portArg string
 	parseArgs := args
