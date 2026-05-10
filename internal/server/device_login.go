@@ -4,22 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/rselbach/rgrok/internal/protocol"
 )
-
-type deviceStartResponse struct {
-	ID              string `json:"id"`
-	UserCode        string `json:"user_code"`
-	VerificationURI string `json:"verification_uri"`
-	ExpiresIn       int    `json:"expires_in"`
-	Interval        int    `json:"interval"`
-}
-
-type devicePollResponse struct {
-	Status string `json:"status"`
-	Token  string `json:"token,omitempty"`
-	Login  string `json:"login,omitempty"`
-	Error  string `json:"error,omitempty"`
-}
 
 func (s *Server) handleDeviceLoginStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -74,7 +61,7 @@ func (s *Server) handleDeviceLoginStart(w http.ResponseWriter, r *http.Request) 
 	s.mu.Unlock()
 
 	s.cfg.Logger.Info("device login started", "id", id, "user_code", device.UserCode)
-	writeJSON(w, deviceStartResponse{
+	writeJSON(w, protocol.DeviceStartResponse{
 		ID:              id,
 		UserCode:        device.UserCode,
 		VerificationURI: device.VerificationURI,
@@ -92,20 +79,20 @@ func (s *Server) handleDeviceLoginPoll(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	login := s.deviceLogin(id)
 	if login == nil {
-		writeJSON(w, devicePollResponse{Status: "expired"})
+		writeJSON(w, protocol.DevicePollResponse{Status: "expired"})
 		return
 	}
 
 	if !s.updateLastPoll(id, login.Interval) {
 		s.cfg.Logger.Debug("device login poll rate limited", "id", id)
-		writeJSON(w, devicePollResponse{Status: "pending"})
+		writeJSON(w, protocol.DevicePollResponse{Status: "pending"})
 		return
 	}
 
 	token, err := s.github.PollDeviceFlowOnce(r.Context(), login.DeviceCode)
 	if err != nil {
 		s.cfg.Logger.Warn("device login poll failed", "id", id, "err", err)
-		writeJSON(w, devicePollResponse{Status: "error", Error: err.Error()})
+		writeJSON(w, protocol.DevicePollResponse{Status: "error", Error: err.Error()})
 		return
 	}
 	switch token.Error {
@@ -113,7 +100,7 @@ func (s *Server) handleDeviceLoginPoll(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Logger.Info("device login token received", "id", id, "token_present", token.AccessToken != "")
 	case "authorization_pending":
 		s.cfg.Logger.Debug("device login still pending", "id", id)
-		writeJSON(w, devicePollResponse{Status: "pending"})
+		writeJSON(w, protocol.DevicePollResponse{Status: "pending"})
 		return
 	case "slow_down":
 		s.mu.Lock()
@@ -122,41 +109,41 @@ func (s *Server) handleDeviceLoginPoll(w http.ResponseWriter, r *http.Request) {
 			s.cfg.Logger.Info("device login slow_down received, increasing interval", "id", id, "new_interval", dev.Interval)
 		}
 		s.mu.Unlock()
-		writeJSON(w, devicePollResponse{Status: "pending"})
+		writeJSON(w, protocol.DevicePollResponse{Status: "pending"})
 		return
 	case "expired_token":
 		s.deleteDeviceLogin(id)
 		s.cfg.Logger.Info("device login expired_token received", "id", id)
-		writeJSON(w, devicePollResponse{Status: "expired"})
+		writeJSON(w, protocol.DevicePollResponse{Status: "expired"})
 		return
 	default:
 		s.cfg.Logger.Warn("device login returned error", "id", id, "error", token.Error, "description", token.Description)
-		writeJSON(w, devicePollResponse{Status: "error", Error: token.Error})
+		writeJSON(w, protocol.DevicePollResponse{Status: "error", Error: token.Error})
 		return
 	}
 
 	ghUser, err := s.github.User(r.Context(), token.AccessToken)
 	if err != nil {
 		s.cfg.Logger.Warn("device login user lookup failed", "id", id, "err", err)
-		writeJSON(w, devicePollResponse{Status: "error", Error: "GitHub user lookup failed"})
+		writeJSON(w, protocol.DevicePollResponse{Status: "error", Error: "GitHub user lookup failed"})
 		return
 	}
 	storedUser, ok := s.store.IsAllowed(ghUser.Login)
 	if !ok {
 		s.deleteDeviceLogin(id)
 		s.cfg.Logger.Info("device login denied by whitelist", "id", id, "github_user", ghUser.Login)
-		writeJSON(w, devicePollResponse{Status: "denied", Login: ghUser.Login})
+		writeJSON(w, protocol.DevicePollResponse{Status: "denied", Login: ghUser.Login})
 		return
 	}
 	clientToken, err := s.store.CreateClientToken(storedUser.Login, storedUser.Admin)
 	if err != nil {
 		s.cfg.Logger.Warn("device login token creation failed", "id", id, "err", err)
-		writeJSON(w, devicePollResponse{Status: "error", Error: "could not create rgrok token"})
+		writeJSON(w, protocol.DevicePollResponse{Status: "error", Error: "could not create rgrok token"})
 		return
 	}
 	s.deleteDeviceLogin(id)
 	s.cfg.Logger.Info("device login complete", "id", id, "login", clientToken.Login)
-	writeJSON(w, devicePollResponse{Status: "complete", Token: clientToken.Token, Login: clientToken.Login})
+	writeJSON(w, protocol.DevicePollResponse{Status: "complete", Token: clientToken.Token, Login: clientToken.Login})
 }
 
 func (s *Server) deviceLogin(id string) *deviceLogin {

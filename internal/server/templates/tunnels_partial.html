@@ -1,0 +1,50 @@
+{{if .Tunnels}}
+<table>
+  <colgroup>
+    <col>
+    <col>
+    {{if .Session.Admin}}<col>{{end}}
+    <col style="width: 100px">
+    <col style="width: 100px">
+  </colgroup>
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Public URL</th>
+      {{if .Session.Admin}}<th>Owner</th>{{end}}
+      <th>Status</th>
+      <th class="col-actions">Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Tunnels}}
+    <tr>
+      <td><div class="row-title">{{.ID}}</div></td>
+      <td><a href="{{.PublicURL}}">{{.PublicURL}}</a></td>
+      {{if $.Session.Admin}}<td>{{.Owner}}</td>{{end}}
+      <td class="cell-widget"><span class="status active">active</span></td>
+      <td class="col-actions cell-widget">
+        <div class="row-actions">
+          <form method="post" action="/dashboard/tunnels/disconnect">
+            <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <button class="icon-btn danger" type="submit" title="Disconnect" aria-label="Disconnect">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 4h12"/>
+                <path d="M5 4V2.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V4"/>
+                <path d="M4.5 4l.6 8a1 1 0 0 0 1 1h4.8a1 1 0 0 0 1-1l.6-8"/>
+              </svg>
+            </button>
+          </form>
+        </div>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<div style="padding: 32px 14px; text-align: center; color: var(--muted);">
+  No active tunnels.
+</div>
+{{end}}
+<div id="tunnel-count" hx-swap-oob="innerHTML">{{len .Tunnels}}</div>

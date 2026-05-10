@@ -6,7 +6,6 @@ type DeviceStartResponse struct {
 	VerificationURI string `json:"verification_uri"`
 	ExpiresIn       int    `json:"expires_in"`
 	Interval        int    `json:"interval"`
-	PollSecret      string `json:"poll_secret,omitempty"`
 }
 
 type DevicePollResponse struct {

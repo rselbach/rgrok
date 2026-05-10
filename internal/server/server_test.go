@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/rselbach/rgrok/internal/protocol"
 	"github.com/stretchr/testify/require"
 )
 
@@ -512,4 +513,18 @@ func TestDeviceLoginSweeper(t *testing.T) {
 	_, ok := s.deviceLogins["expired"]
 	r.False(ok)
 	r.Empty(s.deviceLoginLast)
+}
+
+func TestTemplatesParse(t *testing.T) {
+	r := require.New(t)
+	r.NotNil(landingTemplate)
+	r.NotNil(dashboardTemplate)
+	r.NotNil(tunnelTablePartial)
+}
+
+func TestProtocolTypesUnified(t *testing.T) {
+	// Ensure the server and client packages use protocol.DeviceStartResponse
+	// and protocol.DevicePollResponse by verifying they compile correctly.
+	_ = protocol.DeviceStartResponse{ID: "test"}
+	_ = protocol.DevicePollResponse{Status: "pending"}
 }

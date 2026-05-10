@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/rselbach/rgrok/internal/protocol"
 )
 
 type LoginConfig struct {
@@ -16,35 +18,20 @@ type LoginConfig struct {
 	HTTPClient    *http.Client
 }
 
-type deviceStartResponse struct {
-	ID              string `json:"id"`
-	UserCode        string `json:"user_code"`
-	VerificationURI string `json:"verification_uri"`
-	ExpiresIn       int    `json:"expires_in"`
-	Interval        int    `json:"interval"`
-}
-
-type devicePollResponse struct {
-	Status string `json:"status"`
-	Token  string `json:"token"`
-	Login  string `json:"login"`
-	Error  string `json:"error"`
-}
-
-func StartLogin(ctx context.Context, cfg LoginConfig) (deviceStartResponse, error) {
+func StartLogin(ctx context.Context, cfg LoginConfig) (protocol.DeviceStartResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(cfg.ServerBaseURL, "/")+"/api/login/device/start", nil)
 	if err != nil {
-		return deviceStartResponse{}, err
+		return protocol.DeviceStartResponse{}, err
 	}
 	resp, err := loginHTTPClient(cfg).Do(req)
 	if err != nil {
-		return deviceStartResponse{}, err
+		return protocol.DeviceStartResponse{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return deviceStartResponse{}, fmt.Errorf("login start failed: %s", resp.Status)
+		return protocol.DeviceStartResponse{}, fmt.Errorf("login start failed: %s", resp.Status)
 	}
-	var out deviceStartResponse
+	var out protocol.DeviceStartResponse
 	return out, json.NewDecoder(resp.Body).Decode(&out)
 }
 
@@ -76,7 +63,7 @@ func PollLogin(ctx context.Context, cfg LoginConfig, id string, interval int) (F
 			_ = resp.Body.Close()
 			return FileConfig{}, fmt.Errorf("login poll failed: %s", resp.Status)
 		}
-		var poll devicePollResponse
+		var poll protocol.DevicePollResponse
 		err = json.NewDecoder(resp.Body).Decode(&poll)
 		_ = resp.Body.Close()
 		if err != nil {
