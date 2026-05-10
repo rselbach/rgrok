@@ -24,6 +24,31 @@ type GitHubClient struct {
 	ClientID     string
 	ClientSecret string
 	HTTPClient   *http.Client
+
+	deviceCodeURL string
+	tokenURL      string
+	userURL       string
+}
+
+func (c GitHubClient) deviceCodeEndpoint() string {
+	if c.deviceCodeURL != "" {
+		return c.deviceCodeURL
+	}
+	return GitHubDeviceCodeURL
+}
+
+func (c GitHubClient) tokenEndpoint() string {
+	if c.tokenURL != "" {
+		return c.tokenURL
+	}
+	return GitHubTokenURL
+}
+
+func (c GitHubClient) userEndpoint() string {
+	if c.userURL != "" {
+		return c.userURL
+	}
+	return GitHubUserURL
 }
 
 type GitHubUser struct {
@@ -59,7 +84,7 @@ func (c GitHubClient) StartDeviceFlow(ctx context.Context) (DeviceCode, error) {
 	form.Set("scope", "read:user")
 
 	var out DeviceCode
-	if err := c.postForm(ctx, GitHubDeviceCodeURL, form, &out); err != nil {
+	if err := c.postForm(ctx, c.deviceCodeEndpoint(), form, &out); err != nil {
 		return DeviceCode{}, err
 	}
 	if out.Interval <= 0 {
@@ -69,6 +94,10 @@ func (c GitHubClient) StartDeviceFlow(ctx context.Context) (DeviceCode, error) {
 }
 
 func (c GitHubClient) PollDeviceFlow(ctx context.Context, device DeviceCode) (TokenResponse, error) {
+	if c.ClientID == "" {
+		return TokenResponse{}, errors.New("github client id is required")
+	}
+
 	deadline := time.Now().Add(time.Duration(device.ExpiresIn) * time.Second)
 	interval := time.Duration(device.Interval) * time.Second
 
@@ -92,7 +121,7 @@ func (c GitHubClient) PollDeviceFlow(ctx context.Context, device DeviceCode) (To
 		form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
 
 		var token TokenResponse
-		if err := c.postForm(ctx, GitHubTokenURL, form, &token); err != nil {
+		if err := c.postForm(ctx, c.tokenEndpoint(), form, &token); err != nil {
 			return TokenResponse{}, err
 		}
 		switch token.Error {
@@ -132,7 +161,7 @@ func (c GitHubClient) PollDeviceFlowOnce(ctx context.Context, deviceCode string)
 	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
 
 	var token TokenResponse
-	if err := c.postForm(ctx, GitHubTokenURL, form, &token); err != nil {
+	if err := c.postForm(ctx, c.tokenEndpoint(), form, &token); err != nil {
 		return TokenResponse{}, err
 	}
 	if token.Error == "" && token.AccessToken == "" {
@@ -155,7 +184,7 @@ func (c GitHubClient) ExchangeWebCode(ctx context.Context, code, redirectURI str
 	}
 
 	var token TokenResponse
-	if err := c.postForm(ctx, GitHubTokenURL, form, &token); err != nil {
+	if err := c.postForm(ctx, c.tokenEndpoint(), form, &token); err != nil {
 		return TokenResponse{}, err
 	}
 	if token.Error != "" {
@@ -175,7 +204,7 @@ func (c GitHubClient) User(ctx context.Context, token string) (GitHubUser, error
 		return GitHubUser{}, errors.New("github access token is required")
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, GitHubUserURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.userEndpoint(), nil)
 	if err != nil {
 		return GitHubUser{}, err
 	}

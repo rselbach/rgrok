@@ -529,6 +529,105 @@ func TestProtocolTypesUnified(t *testing.T) {
 	_ = protocol.DevicePollResponse{Status: "pending"}
 }
 
+func TestEndToEndTunnel(t *testing.T) {
+	r := require.New(t)
+
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:            "localhost:7000",
+			PublicScheme:      "http",
+			MaxTunnelsPerUser: 5,
+			Logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store:   store,
+		tunnels: make(map[string]*tunnel),
+	}
+
+	// Create a user and client token.
+	r.NoError(store.UpsertUser("abed", false))
+	ct, err := store.CreateClientToken("abed", false)
+	r.NoError(err)
+
+	// Start the server in the background.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/api/connect" {
+			s.handleConnect(w, req)
+			return
+		}
+		s.handlePublic(w, req)
+	}))
+	defer srv.Close()
+
+	// Dial the WebSocket.
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/connect"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	r.NoError(err)
+	defer conn.Close()
+
+	// Register the tunnel.
+	err = conn.WriteJSON(struct {
+		Type        string `json:"type"`
+		RequestedID string `json:"requested_id"`
+		AuthToken   string `json:"auth_token"`
+		LocalPort   int    `json:"local_port"`
+	}{
+		Type:      "register_tunnel",
+		AuthToken: ct.Token,
+		LocalPort: 1234,
+	})
+	r.NoError(err)
+
+	var reg struct {
+		Type      string `json:"type"`
+		TunnelID  string `json:"tunnel_id"`
+		PublicURL string `json:"public_url"`
+	}
+	err = conn.ReadJSON(&reg)
+	r.NoError(err)
+	r.Equal("tunnel_registered", reg.Type)
+	r.NotEmpty(reg.TunnelID)
+	r.NotEmpty(reg.PublicURL)
+
+	// Run the tunnel message loop in the background so handlePublic can get responses.
+	tunnelDone := make(chan struct{})
+	go func() {
+		defer close(tunnelDone)
+		for {
+			var msg protocol.Message
+			err := conn.ReadJSON(&msg)
+			if err != nil {
+				return
+			}
+			switch msg.Type {
+			case protocol.TypeRequest:
+				// Echo back a synthetic response.
+				_ = conn.WriteJSON(protocol.Message{
+					Type:       protocol.TypeResponse,
+					StreamID:   msg.StreamID,
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"text/plain"}},
+					Body:       []byte("hello from tunnel"),
+				})
+			case protocol.TypePing:
+				_ = conn.WriteJSON(protocol.Message{Type: protocol.TypePong})
+			}
+		}
+	}()
+
+	// Make an HTTP request through the tunnel.
+	host := reg.TunnelID + ".localhost:7000"
+	req := httptest.NewRequest(http.MethodGet, "http://"+host+"/test-path", nil)
+	req.Host = host
+	rec := httptest.NewRecorder()
+	s.handlePublic(rec, req)
+
+	r.Equal(http.StatusOK, rec.Code)
+	r.Equal("hello from tunnel", rec.Body.String())
+}
+
 func TestHealthAndReady(t *testing.T) {
 	r := require.New(t)
 	store, err := OpenStore(t.TempDir() + "/test.json")
