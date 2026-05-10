@@ -26,6 +26,22 @@ func (s *Server) handleDeviceLoginStart(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	ip := clientIP(r)
+	s.mu.Lock()
+	if len(s.deviceLogins) >= maxDeviceLogins {
+		s.mu.Unlock()
+		http.Error(w, "too many active login attempts", http.StatusTooManyRequests)
+		return
+	}
+	if last, ok := s.deviceLoginLast[ip]; ok && time.Since(last) < deviceLoginRateLimit {
+		s.mu.Unlock()
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+	s.deviceLoginLast[ip] = time.Now().UTC()
+	s.mu.Unlock()
+
 	if s.cfg.GitHubClientID == "" {
 		http.Error(w, "GitHub OAuth is not configured", http.StatusServiceUnavailable)
 		return
@@ -43,9 +59,15 @@ func (s *Server) handleDeviceLoginStart(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.mu.Lock()
+	if len(s.deviceLogins) >= maxDeviceLogins {
+		s.mu.Unlock()
+		http.Error(w, "too many active login attempts", http.StatusTooManyRequests)
+		return
+	}
 	s.deviceLogins[id] = &deviceLogin{
 		ID:         id,
 		DeviceCode: device.DeviceCode,
+		ClientIP:   ip,
 		ExpiresAt:  time.Now().UTC().Add(time.Duration(device.ExpiresIn) * time.Second),
 		Interval:   device.Interval,
 	}
@@ -170,6 +192,33 @@ func (s *Server) deleteDeviceLogin(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.deviceLogins, id)
+}
+
+func (s *Server) sweepDeviceLoginsLoop() {
+	ticker := time.NewTicker(deviceLoginSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			s.sweepExpiredDeviceLogins()
+		}
+	}
+}
+
+func (s *Server) sweepExpiredDeviceLogins() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	for id, login := range s.deviceLogins {
+		if now.After(login.ExpiresAt) {
+			delete(s.deviceLogins, id)
+		}
+	}
+	for ip, last := range s.deviceLoginLast {
+		if now.Sub(last) > deviceLoginRateLimit {
+			delete(s.deviceLoginLast, ip)
+		}
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -27,14 +27,17 @@ import (
 )
 
 const (
-	maxBodyBytesDefault   = 32 << 20
-	pingInterval          = 25 * time.Second
-	writeTimeout          = 10 * time.Second
-	closeWriteTimeout     = 2 * time.Second
-	tunnelResponseTimeout = 2 * time.Minute
-	maxRandomIDAttempts   = 10
-	readLimitOverhead     = 1 << 20
-	sendChannelSize       = 64
+	maxBodyBytesDefault      = 32 << 20
+	pingInterval             = 25 * time.Second
+	writeTimeout             = 10 * time.Second
+	closeWriteTimeout        = 2 * time.Second
+	tunnelResponseTimeout    = 2 * time.Minute
+	maxRandomIDAttempts      = 10
+	readLimitOverhead        = 1 << 20
+	sendChannelSize          = 64
+	maxDeviceLogins          = 100
+	deviceLoginRateLimit     = 10 * time.Second
+	deviceLoginSweepInterval = 1 * time.Minute
 )
 
 type Config struct {
@@ -56,9 +59,10 @@ type Server struct {
 	store  *Store
 	github auth.GitHubClient
 
-	mu           sync.RWMutex
-	tunnels      map[string]*tunnel
-	deviceLogins map[string]*deviceLogin
+	mu              sync.RWMutex
+	tunnels         map[string]*tunnel
+	deviceLogins    map[string]*deviceLogin
+	deviceLoginLast map[string]time.Time
 
 	nextStream atomic.Uint64
 }
@@ -66,6 +70,7 @@ type Server struct {
 type deviceLogin struct {
 	ID         string
 	DeviceCode string
+	ClientIP   string
 	ExpiresAt  time.Time
 	Interval   int
 	LastPoll   time.Time
@@ -125,11 +130,12 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	return &Server{
-		cfg:          cfg,
-		store:        store,
-		github:       auth.GitHubClient{ClientID: cfg.GitHubClientID, ClientSecret: cfg.GitHubClientSecret},
-		tunnels:      make(map[string]*tunnel),
-		deviceLogins: make(map[string]*deviceLogin),
+		cfg:             cfg,
+		store:           store,
+		github:          auth.GitHubClient{ClientID: cfg.GitHubClientID, ClientSecret: cfg.GitHubClientSecret},
+		tunnels:         make(map[string]*tunnel),
+		deviceLogins:    make(map[string]*deviceLogin),
+		deviceLoginLast: make(map[string]time.Time),
 	}, nil
 }
 
@@ -160,6 +166,8 @@ func (s *Server) Run() error {
 	}
 
 	s.cfg.Logger.Info("rgrok server listening", "addr", s.cfg.Addr, "domain", s.cfg.Domain, "connect_path", s.cfg.ConnectPath)
+
+	go s.sweepDeviceLoginsLoop()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -650,6 +658,14 @@ func randomChoice(values []string) string {
 
 func writeClose(conn *websocket.Conn, code int, text string) {
 	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(code, text))
+}
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 func addForwardedHeaders(h http.Header, r *http.Request) {

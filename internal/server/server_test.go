@@ -1,12 +1,14 @@
 package server
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
@@ -222,4 +224,95 @@ func TestDashboardMutationsRequirePostAndCSRF(t *testing.T) {
 	user, ok := store.IsAllowed("troy")
 	r.True(ok)
 	r.True(user.Admin)
+}
+
+func TestDeviceLoginRateLimit(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store:           store,
+		tunnels:         make(map[string]*tunnel),
+		deviceLogins:    make(map[string]*deviceLogin),
+		deviceLoginLast: make(map[string]time.Time),
+	}
+
+	// Manually record a recent attempt from the test request's IP.
+	// httptest.NewRequest uses 192.0.2.1 as the default RemoteAddr.
+	s.deviceLoginLast["192.0.2.1"] = time.Now().UTC()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/login/device/start", nil)
+	req.Host = "localhost:7000"
+	rec := httptest.NewRecorder()
+	s.handleDeviceLoginStart(rec, req)
+	r.Equal(http.StatusTooManyRequests, rec.Code)
+}
+
+func TestDeviceLoginGlobalCap(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store:           store,
+		tunnels:         make(map[string]*tunnel),
+		deviceLogins:    make(map[string]*deviceLogin),
+		deviceLoginLast: make(map[string]time.Time),
+	}
+
+	// Fill to capacity.
+	for i := range maxDeviceLogins {
+		key := fmt.Sprintf("login-%d", i)
+		s.deviceLogins[key] = &deviceLogin{
+			ID:        key,
+			ExpiresAt: time.Now().UTC().Add(time.Hour),
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/login/device/start", nil)
+	req.Host = "localhost:7000"
+	rec := httptest.NewRecorder()
+	s.handleDeviceLoginStart(rec, req)
+	r.Equal(http.StatusTooManyRequests, rec.Code)
+}
+
+func TestDeviceLoginSweeper(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store:           store,
+		tunnels:         make(map[string]*tunnel),
+		deviceLogins:    make(map[string]*deviceLogin),
+		deviceLoginLast: make(map[string]time.Time),
+	}
+
+	s.deviceLogins["expired"] = &deviceLogin{
+		ID:        "expired",
+		ExpiresAt: time.Now().UTC().Add(-time.Hour),
+	}
+	s.deviceLoginLast["1.2.3.4"] = time.Now().UTC().Add(-time.Hour)
+
+	s.sweepExpiredDeviceLogins()
+
+	_, ok := s.deviceLogins["expired"]
+	r.False(ok)
+	r.Empty(s.deviceLoginLast)
 }
