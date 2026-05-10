@@ -11,9 +11,10 @@ import (
 )
 
 type FileConfig struct {
-	Token     string    `json:"token"`
-	Login     string    `json:"login"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Token         string    `json:"token"`
+	Login         string    `json:"login"`
+	ServerBaseURL string    `json:"server_base_url"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 func ConfigPath() (string, error) {

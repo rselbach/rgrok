@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -68,6 +69,22 @@ func New(cfg Config) *Client {
 	}
 }
 
+var errTerminal = errors.New("terminal error")
+
+func isTerminal(err error) bool {
+	if errors.Is(err, errTerminal) {
+		return true
+	}
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
+		switch closeErr.Code {
+		case websocket.ClosePolicyViolation:
+			return true
+		}
+	}
+	return false
+}
+
 // Run connects to the rgrok server and forwards requests until the context is
 // cancelled or a fatal error occurs. It automatically reconnects with
 // exponential backoff on disconnect.
@@ -92,6 +109,10 @@ func (c *Client) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+		}
+
+		if isTerminal(err) {
+			return fmt.Errorf("tunnel closed: %w", err)
 		}
 
 		backoff = nextBackoff(backoff, c.cfg.ReconnectTimeout)
@@ -147,7 +168,7 @@ func (c *Client) runOnce(ctx context.Context) error {
 		return err
 	}
 	if registered.Type != protocol.TypeTunnelRegistered {
-		return fmt.Errorf("expected tunnel_registered, got %q", registered.Type)
+		return fmt.Errorf("%w: expected tunnel_registered, got %q", errTerminal, registered.Type)
 	}
 
 	fmt.Fprintf(os.Stdout, "Connected\nForwarding %s -> %s:%d\n", registered.PublicURL, c.cfg.LocalHost, c.cfg.LocalPort)

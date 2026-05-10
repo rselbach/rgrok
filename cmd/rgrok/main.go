@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rselbach/rgrok/internal/client"
@@ -111,10 +112,6 @@ func runLogin(args []string, log *slog.Logger) error {
 }
 
 func runLogout() error {
-	if _, err := client.LoadFileConfig(); err != nil {
-		return err
-	}
-
 	path, err := client.ConfigPath()
 	if err != nil {
 		return err
@@ -130,9 +127,21 @@ func runLogout() error {
 	return nil
 }
 
+func wsURLFromBase(base string) string {
+	base = strings.TrimRight(base, "/")
+	switch {
+	case strings.HasPrefix(base, "https://"):
+		return "wss://" + strings.TrimPrefix(base, "https://") + "/api/connect"
+	case strings.HasPrefix(base, "http://"):
+		return "ws://" + strings.TrimPrefix(base, "http://") + "/api/connect"
+	default:
+		return "wss://" + base + "/api/connect"
+	}
+}
+
 func runConnect(args []string, log *slog.Logger) error {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
-	serverURL := fs.String("server", "wss://rgrok.rselbach.com/api/connect", "rgrok server WebSocket URL")
+	serverURL := fs.String("server", "", "rgrok server WebSocket URL")
 	name := fs.String("name", "", "requested tunnel subdomain/name")
 	token := fs.String("token", "", "GitHub access token override")
 	localHost := fs.String("local-host", "127.0.0.1", "local host to forward to")
@@ -160,6 +169,16 @@ func runConnect(args []string, log *slog.Logger) error {
 		return fmt.Errorf("unexpected arguments after port")
 	}
 
+	srvURL := *serverURL
+	if srvURL == "" {
+		if cfg, err := client.LoadFileConfig(); err == nil && cfg.ServerBaseURL != "" {
+			srvURL = wsURLFromBase(cfg.ServerBaseURL)
+		}
+		if srvURL == "" {
+			srvURL = "wss://rgrok.rselbach.com/api/connect"
+		}
+	}
+
 	localPort, err := strconv.Atoi(portArg)
 	if err != nil || localPort <= 0 || localPort > 65535 {
 		return fmt.Errorf("invalid local port %q", portArg)
@@ -178,7 +197,7 @@ func runConnect(args []string, log *slog.Logger) error {
 	}
 
 	c := client.New(client.Config{
-		ServerURL:    *serverURL,
+		ServerURL:    srvURL,
 		RequestedID:  *name,
 		AuthToken:    authToken,
 		LocalHost:    *localHost,
@@ -209,6 +228,9 @@ func runStatus() error {
 	fmt.Fprintf(os.Stdout, "Logged in as %s. Token last updated: %s. Config: %s\n", cfg.Login, cfg.UpdatedAt, path)
 
 	serverURL := "https://rgrok.rselbach.com"
+	if cfg.ServerBaseURL != "" {
+		serverURL = cfg.ServerBaseURL
+	}
 	if len(os.Args) > 2 {
 		fs := flag.NewFlagSet("status", flag.ContinueOnError)
 		serverFlag := fs.String("server", serverURL, "rgrok server base URL")
@@ -216,7 +238,14 @@ func runStatus() error {
 		serverURL = *serverFlag
 	}
 
-	resp, err := http.Get(serverURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stdout, "Server unreachable: %s\n", err)
+		return nil
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fmt.Fprintf(os.Stdout, "Server unreachable: %s\n", err)
 		return nil
@@ -229,7 +258,7 @@ func runStatus() error {
 func connectUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: rgrok connect [flags] <local-port>
 Flags:
-  -server string     rgrok server WebSocket URL (default wss://rgrok.rselbach.com/api/connect)
+  -server string     rgrok server WebSocket URL (default from login config or wss://rgrok.rselbach.com/api/connect)
   -name string       requested tunnel subdomain
   -token string      auth token override
   -local-host string local host to forward to (default 127.0.0.1)

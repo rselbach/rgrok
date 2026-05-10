@@ -55,10 +55,11 @@ func PollLogin(ctx context.Context, cfg LoginConfig, id string, interval int) (F
 	ticker := time.NewTicker(time.Duration(interval) * time.Second)
 	defer ticker.Stop()
 
+	fmt.Fprintln(os.Stderr, "Waiting for GitHub authorization...")
+
 	for {
 		select {
 		case <-ticker.C:
-			fmt.Fprintln(os.Stderr, "Waiting for GitHub authorization...")
 		case <-ctx.Done():
 			return FileConfig{}, ctx.Err()
 		}
@@ -92,7 +93,7 @@ func PollLogin(ctx context.Context, cfg LoginConfig, id string, interval int) (F
 			if poll.Token == "" {
 				return FileConfig{}, errors.New("server returned an empty rgrok token")
 			}
-			return FileConfig{Token: poll.Token, Login: poll.Login}, nil
+			return FileConfig{Token: poll.Token, Login: poll.Login, ServerBaseURL: cfg.ServerBaseURL}, nil
 		case "denied":
 			return FileConfig{}, fmt.Errorf("GitHub user %s is not whitelisted", poll.Login)
 		case "expired":

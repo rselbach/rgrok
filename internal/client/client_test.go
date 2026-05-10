@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/rselbach/rgrok/internal/protocol"
 	"github.com/stretchr/testify/require"
 )
@@ -88,8 +89,9 @@ func TestConfigRoundTrip(t *testing.T) {
 	t.Setenv("RGROK_CONFIG", filepath.Join(tmpDir, "config.json"))
 
 	cfg := FileConfig{
-		Token: "troy-barnes-token",
-		Login: "Troy Barnes",
+		Token:         "troy-barnes-token",
+		Login:         "Troy Barnes",
+		ServerBaseURL: "https://greendale.example.com",
 	}
 
 	err := SaveFileConfig(cfg)
@@ -99,4 +101,26 @@ func TestConfigRoundTrip(t *testing.T) {
 	r.NoError(err)
 	r.Equal(cfg.Token, loaded.Token)
 	r.Equal(cfg.Login, loaded.Login)
+	r.Equal(cfg.ServerBaseURL, loaded.ServerBaseURL)
+}
+
+func TestIsTerminal(t *testing.T) {
+	tests := map[string]struct {
+		err  error
+		want bool
+	}{
+		"nil is not terminal":                {err: nil, want: false},
+		"plain error is not terminal":        {err: fmt.Errorf("network hiccup"), want: false},
+		"terminal sentinel is terminal":      {err: fmt.Errorf("%w: bad protocol", errTerminal), want: true},
+		"policy violation close is terminal": {err: &websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "invalid token"}, want: true},
+		"normal closure is not terminal":     {err: &websocket.CloseError{Code: websocket.CloseNormalClosure}, want: false},
+		"going away is not terminal":         {err: &websocket.CloseError{Code: websocket.CloseGoingAway}, want: false},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			r := require.New(t)
+			r.Equal(tc.want, isTerminal(tc.err))
+		})
+	}
 }
