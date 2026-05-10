@@ -11,15 +11,30 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/rselbach/rgrok/internal/auth"
+	"github.com/rselbach/rgrok/internal/httputil"
 	"github.com/rselbach/rgrok/internal/protocol"
+)
+
+const (
+	maxBodyBytesDefault   = 32 << 20
+	pingInterval          = 25 * time.Second
+	writeTimeout          = 10 * time.Second
+	closeWriteTimeout     = 2 * time.Second
+	tunnelResponseTimeout = 2 * time.Minute
+	maxRandomIDAttempts   = 10
+	readLimitOverhead     = 1 << 20
+	sendChannelSize       = 64
 )
 
 type Config struct {
@@ -32,6 +47,8 @@ type Config struct {
 	GitHubClientSecret string
 	MaxBodyBytes       int64
 	Logger             *slog.Logger
+	ShutdownTimeout    time.Duration
+	MaxTunnelsPerUser  int
 }
 
 type Server struct {
@@ -67,19 +84,7 @@ type tunnel struct {
 	pending   map[uint64]chan protocol.Message
 }
 
-var (
-	nameRE     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-	hopHeaders = map[string]struct{}{
-		"Connection":          {},
-		"Keep-Alive":          {},
-		"Proxy-Authenticate":  {},
-		"Proxy-Authorization": {},
-		"Te":                  {},
-		"Trailer":             {},
-		"Transfer-Encoding":   {},
-		"Upgrade":             {},
-	}
-)
+var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func New(cfg Config) (*Server, error) {
 	if cfg.Addr == "" {
@@ -98,7 +103,7 @@ func New(cfg Config) (*Server, error) {
 		cfg.DataPath = "rgrok.json"
 	}
 	if cfg.MaxBodyBytes <= 0 {
-		cfg.MaxBodyBytes = 32 << 20
+		cfg.MaxBodyBytes = maxBodyBytesDefault
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -106,6 +111,13 @@ func New(cfg Config) (*Server, error) {
 
 	cfg.Domain = strings.TrimPrefix(strings.TrimPrefix(cfg.Domain, "https://"), "http://")
 	cfg.Domain = strings.TrimRight(cfg.Domain, "/")
+
+	if cfg.ShutdownTimeout <= 0 {
+		cfg.ShutdownTimeout = 30 * time.Second
+	}
+	if cfg.MaxTunnelsPerUser <= 0 {
+		cfg.MaxTunnelsPerUser = 5
+	}
 
 	store, err := OpenStore(cfg.DataPath)
 	if err != nil {
@@ -136,8 +148,87 @@ func (s *Server) Run() error {
 	mux.HandleFunc("/dashboard/tunnels/disconnect", s.baseHostOnly(s.handleDisconnectTunnel))
 	mux.HandleFunc("/", s.handlePublic)
 
+	handler := s.securityHeaders(s.logRequest(mux))
+
+	srv := &http.Server{
+		Addr:           s.cfg.Addr,
+		Handler:        handler,
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   tunnelResponseTimeout + 10*time.Second,
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
+
 	s.cfg.Logger.Info("rgrok server listening", "addr", s.cfg.Addr, "domain", s.cfg.Domain, "connect_path", s.cfg.ConnectPath)
-	return http.ListenAndServe(s.cfg.Addr, mux)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServe()
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case err := <-errCh:
+		return err
+	case sig := <-sigCh:
+		s.cfg.Logger.Info("shutting down", "signal", sig.String())
+		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			s.cfg.Logger.Error("shutdown failed", "err", err)
+			return err
+		}
+		s.cfg.Logger.Info("shutdown complete")
+		return nil
+	}
+}
+
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+	wrote  bool
+}
+
+func (w *responseWriter) WriteHeader(code int) {
+	if w.wrote {
+		return
+	}
+	w.status = code
+	w.wrote = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *responseWriter) Write(b []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (s *Server) logRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rw := &responseWriter{ResponseWriter: w}
+		next.ServeHTTP(rw, r)
+		s.cfg.Logger.Info("request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"remote", r.RemoteAddr,
+			"status", rw.status,
+			"duration", time.Since(start),
+		)
+	})
+}
+
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) baseHostOnly(next http.HandlerFunc) http.HandlerFunc {
@@ -152,7 +243,14 @@ func (s *Server) baseHostOnly(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	upgrader := websocket.Upgrader{
-		CheckOrigin: func(*http.Request) bool { return true },
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				return true
+			}
+			origin = strings.TrimPrefix(strings.TrimPrefix(origin, "https://"), "http://")
+			return sameHost(origin, s.cfg.Domain)
+		},
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -161,7 +259,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	conn.SetReadLimit(s.cfg.MaxBodyBytes + (1 << 20))
+	conn.SetReadLimit(s.cfg.MaxBodyBytes + readLimitOverhead)
 
 	var reg protocol.Message
 	if err := conn.ReadJSON(&reg); err != nil {
@@ -192,7 +290,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		publicURL: s.cfg.PublicScheme + "://" + host,
 		owner:     clientToken.Login,
 		conn:      conn,
-		send:      make(chan protocol.Message, 64),
+		send:      make(chan protocol.Message, sendChannelSize),
 		done:      make(chan struct{}),
 		pending:   make(map[uint64]chan protocol.Message),
 	}
@@ -263,8 +361,8 @@ func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
 	respCh := t.addPending(streamID)
 	defer t.removePending(streamID)
 
-	headers := cloneHeader(r.Header)
-	removeHopHeaders(headers)
+	headers := httputil.CloneHeader(r.Header)
+	httputil.RemoveHopHeaders(headers)
 	addForwardedHeaders(headers, r)
 
 	req := protocol.Message{
@@ -287,7 +385,7 @@ func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), tunnelResponseTimeout)
 	defer cancel()
 
 	var resp protocol.Message
@@ -306,8 +404,8 @@ func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respHeaders := cloneHeader(resp.Header)
-	removeHopHeaders(respHeaders)
+	respHeaders := httputil.CloneHeader(resp.Header)
+	httputil.RemoveHopHeaders(respHeaders)
 	for key, values := range respHeaders {
 		for _, value := range values {
 			w.Header().Add(key, value)
@@ -350,6 +448,7 @@ func (s *Server) writeIndexOrNotFound(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://unpkg.com; style-src 'self' 'unsafe-inline'")
 	_ = landingTemplate.Execute(w, nil)
 }
 
@@ -369,7 +468,7 @@ func (s *Server) chooseID(requested string) (string, error) {
 		return requested, nil
 	}
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < maxRandomIDAttempts; i++ {
 		id := randomID()
 		host := id + "." + s.cfg.Domain
 		s.mu.RLock()
@@ -382,7 +481,23 @@ func (s *Server) chooseID(requested string) (string, error) {
 	return "", errors.New("could not allocate tunnel id")
 }
 
+func (s *Server) countUserTunnels(login string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, t := range s.tunnels {
+		if t.owner == login {
+			count++
+		}
+	}
+	return count
+}
+
 func (s *Server) registerTunnel(t *tunnel) error {
+	if s.countUserTunnels(t.owner) >= s.cfg.MaxTunnelsPerUser {
+		return fmt.Errorf("maximum number of tunnels (%d) reached for user %s", s.cfg.MaxTunnelsPerUser, t.owner)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := strings.ToLower(t.host)
@@ -400,25 +515,25 @@ func (s *Server) unregisterTunnel(t *tunnel) {
 }
 
 func (t *tunnel) writeLoop() {
-	ticker := time.NewTicker(25 * time.Second)
+	ticker := time.NewTicker(pingInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case msg := <-t.send:
-			_ = t.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = t.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 			if err := t.conn.WriteJSON(msg); err != nil {
 				_ = t.conn.Close()
 				return
 			}
 		case <-ticker.C:
-			_ = t.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = t.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 			if err := t.conn.WriteJSON(protocol.Message{Type: protocol.TypePing}); err != nil {
 				_ = t.conn.Close()
 				return
 			}
 		case <-t.done:
-			_ = t.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
+			_ = t.conn.SetWriteDeadline(time.Now().Add(closeWriteTimeout))
 			_ = t.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bye"))
 			return
 		}
@@ -535,22 +650,6 @@ func randomChoice(values []string) string {
 
 func writeClose(conn *websocket.Conn, code int, text string) {
 	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(code, text))
-}
-
-func cloneHeader(h http.Header) http.Header {
-	out := make(http.Header, len(h))
-	for key, values := range h {
-		cp := make([]string, len(values))
-		copy(cp, values)
-		out[key] = cp
-	}
-	return out
-}
-
-func removeHopHeaders(h http.Header) {
-	for key := range hopHeaders {
-		h.Del(key)
-	}
 }
 
 func addForwardedHeaders(h http.Header, r *http.Request) {

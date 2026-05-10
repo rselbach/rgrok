@@ -117,6 +117,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://unpkg.com; style-src 'self' 'unsafe-inline'")
 	if err := dashboardTemplate.Execute(w, data); err != nil {
 		s.cfg.Logger.Error("dashboard render failed", "err", err)
 	}
@@ -896,6 +897,7 @@ func (s *Server) handleDashboardTunnels(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://unpkg.com; style-src 'self' 'unsafe-inline'")
 	if err := tunnelTablePartial.Execute(w, data); err != nil {
 		s.cfg.Logger.Error("tunnel table partial render failed", "err", err)
 	}

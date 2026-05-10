@@ -1,0 +1,102 @@
+package client
+
+import (
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"path/filepath"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/rselbach/rgrok/internal/protocol"
+	"github.com/stretchr/testify/require"
+)
+
+func TestHandleRequestDoesNotBlockWhenDoneClosed(t *testing.T) {
+	// Start a local HTTP server that returns instantly so handleRequest
+	// reaches the send on the unbuffered channel quickly.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "ok")
+	}))
+	defer srv.Close()
+
+	u, err := url.Parse(srv.URL)
+	require.NoError(t, err)
+
+	host, portStr, err := net.SplitHostPort(u.Host)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+
+	c := New(Config{
+		LocalHost:    host,
+		LocalPort:    port,
+		MaxBodyBytes: 32 << 20,
+	})
+
+	// Override the HTTP client with a very short timeout so the test
+	// doesn't hang for the full 2-minute default if the server were
+	// unreachable.
+	c.httpClient = &http.Client{Timeout: 5 * time.Second}
+
+	send := make(chan protocol.Message) // unbuffered: will block
+	done := make(chan struct{})
+	close(done)
+
+	msg := protocol.Message{
+		Type:     protocol.TypeRequest,
+		StreamID: 1,
+		Method:   http.MethodGet,
+		Path:     "/",
+	}
+
+	// handleRequest must return promptly because done is closed; if it
+	// blocks on the unbuffered send the test will time out.
+	c.handleRequest(msg, send, done)
+}
+
+func TestNextBackoff(t *testing.T) {
+	tests := map[string]struct {
+		current time.Duration
+		max     time.Duration
+		want    time.Duration
+	}{
+		"from 0 returns 1s":         {current: 0, max: 30 * time.Second, want: time.Second},
+		"1s doubles to 2s":          {current: time.Second, max: 30 * time.Second, want: 2 * time.Second},
+		"2s doubles to 4s":          {current: 2 * time.Second, max: 30 * time.Second, want: 4 * time.Second},
+		"16s doubles to 30s capped": {current: 16 * time.Second, max: 30 * time.Second, want: 30 * time.Second},
+		"30s stays at 30s":          {current: 30 * time.Second, max: 30 * time.Second, want: 30 * time.Second},
+		"capped by custom max":      {current: 2 * time.Second, max: time.Second, want: time.Second},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			r := require.New(t)
+			r.Equal(tc.want, nextBackoff(tc.current, tc.max))
+		})
+	}
+}
+
+func TestConfigRoundTrip(t *testing.T) {
+	r := require.New(t)
+
+	tmpDir := t.TempDir()
+	t.Setenv("RGROK_CONFIG", filepath.Join(tmpDir, "config.json"))
+
+	cfg := FileConfig{
+		Token: "troy-barnes-token",
+		Login: "Troy Barnes",
+	}
+
+	err := SaveFileConfig(cfg)
+	r.NoError(err)
+
+	loaded, err := LoadFileConfig()
+	r.NoError(err)
+	r.Equal(cfg.Token, loaded.Token)
+	r.Equal(cfg.Login, loaded.Login)
+}

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -27,8 +28,12 @@ func main() {
 		err = runServer(os.Args[2:], log)
 	case "login":
 		err = runLogin(os.Args[2:], log)
+	case "logout":
+		err = runLogout()
 	case "connect":
 		err = runConnect(os.Args[2:], log)
+	case "status":
+		err = runStatus()
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -105,6 +110,26 @@ func runLogin(args []string, log *slog.Logger) error {
 	return nil
 }
 
+func runLogout() error {
+	if _, err := client.LoadFileConfig(); err != nil {
+		return err
+	}
+
+	path, err := client.ConfigPath()
+	if err != nil {
+		return err
+	}
+
+	if err := os.Remove(path); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+	}
+
+	fmt.Fprintf(os.Stdout, "logged out, removed config at %s\n", path)
+	return nil
+}
+
 func runConnect(args []string, log *slog.Logger) error {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
 	serverURL := fs.String("server", "wss://rgrok.rselbach.com/api/connect", "rgrok server WebSocket URL")
@@ -126,11 +151,13 @@ func runConnect(args []string, log *slog.Logger) error {
 	}
 	if portArg == "" {
 		if fs.NArg() != 1 {
-			return fmt.Errorf("usage: rgrok connect [flags] <local-port>")
+			connectUsage()
+			return fmt.Errorf("missing local port")
 		}
 		portArg = fs.Arg(0)
 	} else if fs.NArg() != 0 {
-		return fmt.Errorf("usage: rgrok connect [flags] <local-port>")
+		connectUsage()
+		return fmt.Errorf("unexpected arguments after port")
 	}
 
 	localPort, err := strconv.Atoi(portArg)
@@ -147,7 +174,7 @@ func runConnect(args []string, log *slog.Logger) error {
 		authToken = cfg.Token
 	}
 	if authToken == "" {
-		return fmt.Errorf("not logged in; run rgrok login first")
+		return fmt.Errorf("not logged in; run `rgrok login --server <server-url>` first")
 	}
 
 	c := client.New(client.Config{
@@ -160,7 +187,54 @@ func runConnect(args []string, log *slog.Logger) error {
 		MaxBodyBytes: *maxBody,
 		Logger:       log,
 	})
-	return c.Run()
+	return c.Run(context.Background())
+}
+
+func runStatus() error {
+	path, err := client.ConfigPath()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := client.LoadFileConfig()
+	if err != nil {
+		return err
+	}
+
+	if cfg.Token == "" {
+		fmt.Fprintln(os.Stdout, "Not logged in. Run: rgrok login")
+		return nil
+	}
+
+	fmt.Fprintf(os.Stdout, "Logged in as %s. Token last updated: %s. Config: %s\n", cfg.Login, cfg.UpdatedAt, path)
+
+	serverURL := "https://rgrok.rselbach.com"
+	if len(os.Args) > 2 {
+		fs := flag.NewFlagSet("status", flag.ContinueOnError)
+		serverFlag := fs.String("server", serverURL, "rgrok server base URL")
+		_ = fs.Parse(os.Args[2:])
+		serverURL = *serverFlag
+	}
+
+	resp, err := http.Get(serverURL)
+	if err != nil {
+		fmt.Fprintf(os.Stdout, "Server unreachable: %s\n", err)
+		return nil
+	}
+	_ = resp.Body.Close()
+	fmt.Fprintf(os.Stdout, "Server reachable at %s\n", serverURL)
+	return nil
+}
+
+func connectUsage() {
+	fmt.Fprintln(os.Stderr, `Usage: rgrok connect [flags] <local-port>
+Flags:
+  -server string     rgrok server WebSocket URL (default wss://rgrok.rselbach.com/api/connect)
+  -name string       requested tunnel subdomain
+  -token string      auth token override
+  -local-host string local host to forward to (default 127.0.0.1)
+  -preserve-host     send public Host header to local app
+  -max-body int      max body bytes (default 33554432)`)
 }
 
 func usage() {
@@ -169,7 +243,9 @@ func usage() {
 Usage:
   rgrok server [flags]
   rgrok login [flags]
+  rgrok logout
   rgrok connect [flags] <local-port>
+  rgrok status
 
 Examples:
   rgrok server --addr :7000 --domain localhost:7000

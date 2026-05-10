@@ -1,4 +1,5 @@
 bin/
+.claude/
 
 # Go build and test artifacts
 *.test
