@@ -135,6 +135,9 @@ func (c GitHubClient) PollDeviceFlowOnce(ctx context.Context, deviceCode string)
 	if err := c.postForm(ctx, GitHubTokenURL, form, &token); err != nil {
 		return TokenResponse{}, err
 	}
+	if token.Error == "" && token.AccessToken == "" {
+		return TokenResponse{}, errors.New("github returned an empty access token")
+	}
 	return token, nil
 }
 

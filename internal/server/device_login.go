@@ -51,6 +51,7 @@ func (s *Server) handleDeviceLoginStart(w http.ResponseWriter, r *http.Request) 
 	}
 	s.mu.Unlock()
 
+	s.cfg.Logger.Info("device login started", "id", id, "user_code", device.UserCode)
 	writeJSON(w, deviceStartResponse{
 		ID:              id,
 		UserCode:        device.UserCode,
@@ -73,12 +74,11 @@ func (s *Server) handleDeviceLoginPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
-	if now.Before(login.LastPoll.Add(time.Duration(login.Interval) * time.Second)) {
+	if !s.updateLastPoll(id, login.Interval) {
+		s.cfg.Logger.Debug("device login poll rate limited", "id", id)
 		writeJSON(w, devicePollResponse{Status: "pending"})
 		return
 	}
-	login.LastPoll = now
 
 	token, err := s.github.PollDeviceFlowOnce(r.Context(), login.DeviceCode)
 	if err != nil {
@@ -88,12 +88,23 @@ func (s *Server) handleDeviceLoginPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	switch token.Error {
 	case "":
-	case "authorization_pending", "slow_down":
-		s.cfg.Logger.Debug("device login still pending", "id", id, "status", token.Error)
+		s.cfg.Logger.Info("device login token received", "id", id, "token_present", token.AccessToken != "")
+	case "authorization_pending":
+		s.cfg.Logger.Debug("device login still pending", "id", id)
+		writeJSON(w, devicePollResponse{Status: "pending"})
+		return
+	case "slow_down":
+		s.mu.Lock()
+		if dev := s.deviceLogins[id]; dev != nil {
+			dev.Interval += 5
+			s.cfg.Logger.Info("device login slow_down received, increasing interval", "id", id, "new_interval", dev.Interval)
+		}
+		s.mu.Unlock()
 		writeJSON(w, devicePollResponse{Status: "pending"})
 		return
 	case "expired_token":
 		s.deleteDeviceLogin(id)
+		s.cfg.Logger.Info("device login expired_token received", "id", id)
 		writeJSON(w, devicePollResponse{Status: "expired"})
 		return
 	default:
@@ -104,22 +115,25 @@ func (s *Server) handleDeviceLoginPoll(w http.ResponseWriter, r *http.Request) {
 
 	ghUser, err := s.github.User(r.Context(), token.AccessToken)
 	if err != nil {
+		s.cfg.Logger.Warn("device login user lookup failed", "id", id, "err", err)
 		writeJSON(w, devicePollResponse{Status: "error", Error: "GitHub user lookup failed"})
 		return
 	}
 	storedUser, ok := s.store.IsAllowed(ghUser.Login)
 	if !ok {
 		s.deleteDeviceLogin(id)
-		s.cfg.Logger.Info("device login denied by whitelist", "github_user", ghUser.Login)
+		s.cfg.Logger.Info("device login denied by whitelist", "id", id, "github_user", ghUser.Login)
 		writeJSON(w, devicePollResponse{Status: "denied", Login: ghUser.Login})
 		return
 	}
 	clientToken, err := s.store.CreateClientToken(storedUser.Login, storedUser.Admin)
 	if err != nil {
+		s.cfg.Logger.Warn("device login token creation failed", "id", id, "err", err)
 		writeJSON(w, devicePollResponse{Status: "error", Error: "could not create rgrok token"})
 		return
 	}
 	s.deleteDeviceLogin(id)
+	s.cfg.Logger.Info("device login complete", "id", id, "login", clientToken.Login)
 	writeJSON(w, devicePollResponse{Status: "complete", Token: clientToken.Token, Login: clientToken.Login})
 }
 
@@ -137,6 +151,21 @@ func (s *Server) deviceLogin(id string) *deviceLogin {
 	return login
 }
 
+func (s *Server) updateLastPoll(id string, interval int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	login := s.deviceLogins[id]
+	if login == nil {
+		return false
+	}
+	now := time.Now().UTC()
+	if now.Before(login.LastPoll.Add(time.Duration(interval) * time.Second)) {
+		return false
+	}
+	login.LastPoll = now
+	return true
+}
+
 func (s *Server) deleteDeviceLogin(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -145,5 +174,6 @@ func (s *Server) deleteDeviceLogin(id string) {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(v)
 }

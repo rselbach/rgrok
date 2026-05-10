@@ -82,6 +82,9 @@ func PollLogin(ctx context.Context, cfg LoginConfig, id string, interval int) (F
 			return FileConfig{}, err
 		}
 
+		if poll.Status != "pending" {
+			fmt.Fprintf(os.Stderr, "Server poll status: %s\n", poll.Status)
+		}
 		switch poll.Status {
 		case "pending":
 			continue
