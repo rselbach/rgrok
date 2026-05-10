@@ -349,6 +349,80 @@ func TestCookieSecureBehindProxy(t *testing.T) {
 	r.True(found, "expected session cookie to be cleared with Secure flag")
 }
 
+func TestClientTokenExpiry(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	token, err := store.CreateClientToken("abed", false)
+	r.NoError(err)
+	r.False(token.ExpiresAt.IsZero())
+
+	// Fresh token is valid.
+	ct, ok := store.ClientToken(token.Token)
+	r.True(ok)
+	r.Equal("abed", ct.Login)
+
+	// Manually expire the token in the store.
+	store.mu.Lock()
+	expired := store.data.ClientTokens[token.Token]
+	expired.ExpiresAt = time.Now().UTC().Add(-time.Hour)
+	store.data.ClientTokens[token.Token] = expired
+	store.mu.Unlock()
+
+	_, ok = store.ClientToken(token.Token)
+	r.False(ok, "expired token should be rejected")
+}
+
+func TestRevokeSessions(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store: store,
+	}
+
+	r.NoError(store.UpsertUser("abed", false))
+	token1, err := store.CreateClientToken("abed", false)
+	r.NoError(err)
+	token2, err := store.CreateClientToken("abed", false)
+	r.NoError(err)
+	token3, err := store.CreateClientToken("troy", false)
+	r.NoError(err)
+
+	session, err := store.CreateSession("abed", false)
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/sessions/revoke", strings.NewReader("csrf_token="+session.CSRFToken))
+	req.Host = "localhost:7000"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	rec := httptest.NewRecorder()
+
+	s.handleRevokeSessions(rec, req)
+	r.Equal(http.StatusFound, rec.Code)
+
+	// abed's tokens should be gone.
+	_, ok := store.ClientToken(token1.Token)
+	r.False(ok)
+	_, ok = store.ClientToken(token2.Token)
+	r.False(ok)
+
+	// troy's token should remain.
+	_, ok = store.ClientToken(token3.Token)
+	r.True(ok)
+
+	// Session should be deleted too.
+	_, ok = store.Session(session.ID)
+	r.False(ok)
+}
+
 func TestDeviceLoginRateLimit(t *testing.T) {
 	r := require.New(t)
 	store, err := OpenStore(t.TempDir() + "/test.json")

@@ -14,6 +14,8 @@ import (
 	"github.com/rselbach/rgrok/internal/atomicfile"
 )
 
+const clientTokenLifetime = 90 * 24 * time.Hour
+
 type Store struct {
 	path string
 	mu   sync.Mutex
@@ -46,6 +48,7 @@ type StoredClientToken struct {
 	Login     string    `json:"login"`
 	Admin     bool      `json:"admin"`
 	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -184,11 +187,13 @@ func (s *Store) CreateClientToken(login string, admin bool) (StoredClientToken, 
 	if err != nil {
 		return StoredClientToken{}, err
 	}
+	now := time.Now().UTC()
 	clientToken := StoredClientToken{
 		Token:     token,
 		Login:     login,
 		Admin:     admin,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: now,
+		ExpiresAt: now.Add(clientTokenLifetime),
 	}
 
 	s.mu.Lock()
@@ -204,7 +209,27 @@ func (s *Store) ClientToken(token string) (StoredClientToken, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	clientToken, ok := s.data.ClientTokens[token]
-	return clientToken, ok
+	if !ok {
+		return StoredClientToken{}, false
+	}
+	if time.Now().UTC().After(clientToken.ExpiresAt) {
+		delete(s.data.ClientTokens, token)
+		_ = s.saveLocked()
+		return StoredClientToken{}, false
+	}
+	return clientToken, true
+}
+
+func (s *Store) RevokeClientTokensForUser(login string) error {
+	login = normalizeLogin(login)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for token, ct := range s.data.ClientTokens {
+		if normalizeLogin(ct.Login) == login {
+			delete(s.data.ClientTokens, token)
+		}
+	}
+	return s.saveLocked()
 }
 
 func (s *Store) load() error {

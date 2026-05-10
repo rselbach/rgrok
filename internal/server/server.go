@@ -156,6 +156,7 @@ func (s *Server) Run() error {
 	mux.HandleFunc("/dashboard/users/add", s.baseHostOnly(s.requirePost(s.handleAddUser)))
 	mux.HandleFunc("/dashboard/users/delete", s.baseHostOnly(s.requirePost(s.handleDeleteUser)))
 	mux.HandleFunc("/dashboard/tunnels/disconnect", s.baseHostOnly(s.requirePost(s.handleDisconnectTunnel)))
+	mux.HandleFunc("/dashboard/sessions/revoke", s.baseHostOnly(s.requirePost(s.handleRevokeSessions)))
 	mux.HandleFunc("/", s.handlePublic)
 
 	handler := s.securityHeaders(s.logRequest(mux))

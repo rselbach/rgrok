@@ -175,6 +175,24 @@ func (s *Server) handleDisconnectTunnel(w http.ResponseWriter, r *http.Request) 
 	http.Redirect(w, r, "/dashboard", http.StatusFound)
 }
 
+func (s *Server) handleRevokeSessions(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireCSRF(w, r, session) {
+		return
+	}
+	if err := s.store.RevokeClientTokensForUser(session.Login); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = s.store.DeleteSession(session.ID)
+	clearCookie(w, sessionCookieName, s.cookieSecure())
+	s.cfg.Logger.Info("sessions revoked", "login", session.Login)
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (StoredSession, bool) {
 	session, ok := s.requireSession(w, r)
 	if !ok {
@@ -705,6 +723,18 @@ td.cell-widget { overflow: visible; }
         </span>
         Sign out
       </a>
+      <form method="post" action="/dashboard/sessions/revoke" style="margin:0">
+        <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
+        <button type="submit" class="side-item" style="width:100%;border:none;background:transparent;cursor:pointer;text-align:left;font:inherit;padding:6px 10px">
+          <span class="icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 4l8 8"/>
+              <path d="M12 4l-8 8"/>
+            </svg>
+          </span>
+          Revoke sessions
+        </button>
+      </form>
     </nav>
   </aside>
 
