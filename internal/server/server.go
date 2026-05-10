@@ -143,9 +143,9 @@ func (s *Server) Run() error {
 	mux.HandleFunc("/logout", s.baseHostOnly(s.handleLogout))
 	mux.HandleFunc("/dashboard", s.baseHostOnly(s.handleDashboard))
 	mux.HandleFunc("/dashboard/tunnels", s.baseHostOnly(s.handleDashboardTunnels))
-	mux.HandleFunc("/dashboard/users/add", s.baseHostOnly(s.handleAddUser))
-	mux.HandleFunc("/dashboard/users/delete", s.baseHostOnly(s.handleDeleteUser))
-	mux.HandleFunc("/dashboard/tunnels/disconnect", s.baseHostOnly(s.handleDisconnectTunnel))
+	mux.HandleFunc("/dashboard/users/add", s.baseHostOnly(s.requirePost(s.handleAddUser)))
+	mux.HandleFunc("/dashboard/users/delete", s.baseHostOnly(s.requirePost(s.handleDeleteUser)))
+	mux.HandleFunc("/dashboard/tunnels/disconnect", s.baseHostOnly(s.requirePost(s.handleDisconnectTunnel)))
 	mux.HandleFunc("/", s.handlePublic)
 
 	handler := s.securityHeaders(s.logRequest(mux))

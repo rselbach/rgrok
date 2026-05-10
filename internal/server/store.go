@@ -36,6 +36,7 @@ type StoredSession struct {
 	ID        string    `json:"id"`
 	Login     string    `json:"login"`
 	Admin     bool      `json:"admin"`
+	CSRFToken string    `json:"csrf_token"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
@@ -133,10 +134,15 @@ func (s *Store) CreateSession(login string, admin bool) (StoredSession, error) {
 	if err != nil {
 		return StoredSession{}, err
 	}
+	csrf, err := randomHex(32)
+	if err != nil {
+		return StoredSession{}, err
+	}
 	session := StoredSession{
 		ID:        id,
 		Login:     login,
 		Admin:     admin,
+		CSRFToken: csrf,
 		CreatedAt: time.Now().UTC(),
 		ExpiresAt: time.Now().UTC().Add(30 * 24 * time.Hour),
 	}

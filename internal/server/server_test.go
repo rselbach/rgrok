@@ -1,6 +1,8 @@
 package server
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -165,4 +167,59 @@ func TestMaxTunnelsPerUser(t *testing.T) {
 	r.Contains(err.Error(), "maximum number of tunnels")
 
 	r.NoError(s.registerTunnel(&tunnel{id: "t4", host: "t4.localhost:7000", owner: "troy"}))
+}
+
+func TestDashboardMutationsRequirePostAndCSRF(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store:   store,
+		tunnels: make(map[string]*tunnel),
+	}
+
+	r.NoError(store.UpsertUser("abed", true))
+	session, err := store.CreateSession("abed", true)
+	r.NoError(err)
+
+	// Compose the same middleware stack used in production routes.
+	handler := s.baseHostOnly(s.requirePost(s.handleAddUser))
+
+	run := func(method, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/dashboard/users/add", strings.NewReader(body))
+		req.Host = "localhost:7000"
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// GET -> 405 Method Not Allowed
+	rec := run(http.MethodGet, "login=troy&admin=on")
+	r.Equal(http.StatusMethodNotAllowed, rec.Code)
+
+	// POST without csrf_token -> 403 Forbidden
+	rec = run(http.MethodPost, "login=troy&admin=on")
+	r.Equal(http.StatusForbidden, rec.Code)
+
+	// POST with wrong csrf_token -> 403 Forbidden
+	rec = run(http.MethodPost, "login=troy&admin=on&csrf_token=bad")
+	r.Equal(http.StatusForbidden, rec.Code)
+
+	// POST with correct csrf_token -> 302 Redirect
+	rec = run(http.MethodPost, "login=troy&admin=on&csrf_token="+session.CSRFToken)
+	r.Equal(http.StatusFound, rec.Code)
+	r.Equal("/dashboard", rec.Header().Get("Location"))
+
+	// Verify user was actually created.
+	user, ok := store.IsAllowed("troy")
+	r.True(ok)
+	r.True(user.Admin)
 }

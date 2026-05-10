@@ -128,8 +128,7 @@ func (s *Server) handleAddUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+	if !s.requireCSRF(w, r, session) {
 		return
 	}
 	login := strings.TrimSpace(r.Form.Get("login"))
@@ -147,8 +146,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+	if !s.requireCSRF(w, r, session) {
 		return
 	}
 	login := r.Form.Get("login")
@@ -165,8 +163,7 @@ func (s *Server) handleDisconnectTunnel(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+	if !s.requireCSRF(w, r, session) {
 		return
 	}
 	id := r.Form.Get("id")
@@ -188,6 +185,28 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (StoredSes
 		return StoredSession{}, false
 	}
 	return session, true
+}
+
+func (s *Server) requirePost(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) requireCSRF(w http.ResponseWriter, r *http.Request, session StoredSession) bool {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return false
+	}
+	if r.PostForm.Get("csrf_token") != session.CSRFToken {
+		http.Error(w, "invalid csrf token", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (StoredSession, bool) {
@@ -747,6 +766,7 @@ td.cell-widget { overflow: visible; }
               <td class="col-actions cell-widget">
                 <div class="row-actions">
                   <form method="post" action="/dashboard/tunnels/disconnect">
+                    <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
                     <input type="hidden" name="id" value="{{.ID}}">
                     <button class="icon-btn danger" type="submit" title="Disconnect" aria-label="Disconnect">
                       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -775,6 +795,7 @@ td.cell-widget { overflow: visible; }
       <div class="card-header">
         <h2>Whitelist</h2>
         <form method="post" action="/dashboard/users/add" class="form-inline">
+          <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
           <input type="text" name="login" placeholder="GitHub username" required>
           <label><input type="checkbox" name="admin"> Admin</label>
           <button type="submit" class="btn btn-primary btn-sm"><span class="plus">+</span> Add user</button>
@@ -802,6 +823,7 @@ td.cell-widget { overflow: visible; }
                 <div class="row-actions">
                   {{if ne .Login "rselbach"}}
                   <form method="post" action="/dashboard/users/delete">
+                    <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
                     <input type="hidden" name="login" value="{{.Login}}">
                     <button class="icon-btn danger" type="submit" title="Remove" aria-label="Remove">
                       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -860,6 +882,7 @@ var tunnelTablePartial = template.Must(template.New("tunnelTable").Parse(`{{if .
       <td class="col-actions cell-widget">
         <div class="row-actions">
           <form method="post" action="/dashboard/tunnels/disconnect">
+            <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
             <input type="hidden" name="id" value="{{.ID}}">
             <button class="icon-btn danger" type="submit" title="Disconnect" aria-label="Disconnect">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
