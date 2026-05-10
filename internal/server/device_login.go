@@ -77,8 +77,8 @@ func (s *Server) handleDeviceLoginPoll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := r.URL.Query().Get("id")
-	login := s.deviceLogin(id)
-	if login == nil {
+	login, ok := s.deviceLogin(id)
+	if !ok {
 		writeJSON(w, protocol.DevicePollResponse{Status: "expired"})
 		return
 	}
@@ -146,18 +146,18 @@ func (s *Server) handleDeviceLoginPoll(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, protocol.DevicePollResponse{Status: "complete", Token: clientToken.Token, Login: clientToken.Login})
 }
 
-func (s *Server) deviceLogin(id string) *deviceLogin {
+func (s *Server) deviceLogin(id string) (deviceLogin, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	login := s.deviceLogins[id]
 	if login == nil {
-		return nil
+		return deviceLogin{}, false
 	}
 	if time.Now().UTC().After(login.ExpiresAt) {
 		delete(s.deviceLogins, id)
-		return nil
+		return deviceLogin{}, false
 	}
-	return login
+	return *login, true
 }
 
 func (s *Server) updateLastPoll(id string, interval int) bool {

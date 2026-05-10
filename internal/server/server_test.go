@@ -173,6 +173,52 @@ func TestMaxTunnelsPerUser(t *testing.T) {
 	r.NoError(s.registerTunnel(&tunnel{id: "t4", host: "t4.localhost:7000", owner: "troy"}))
 }
 
+func TestFailPendingDoesNotBlockWhenResponseQueued(t *testing.T) {
+	r := require.New(t)
+
+	ch := make(chan protocol.Message, 1)
+	ch <- protocol.Message{Type: protocol.TypeResponse, StreamID: 1, StatusCode: http.StatusOK}
+	tun := &tunnel{
+		pending: map[uint64]chan protocol.Message{1: ch},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		tun.failPending()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("failPending blocked on a full response channel")
+	}
+
+	r.Empty(tun.pending)
+}
+
+func TestDeviceLoginReturnsSnapshot(t *testing.T) {
+	r := require.New(t)
+	s := &Server{
+		deviceLogins: map[string]*deviceLogin{
+			"login-id": {
+				ID:        "login-id",
+				ExpiresAt: time.Now().UTC().Add(time.Hour),
+				Interval:  5,
+			},
+		},
+	}
+
+	login, ok := s.deviceLogin("login-id")
+	r.True(ok)
+	login.Interval = 99
+
+	s.mu.Lock()
+	stored := s.deviceLogins["login-id"].Interval
+	s.mu.Unlock()
+	r.Equal(5, stored)
+}
+
 func TestDashboardMutationsRequirePostAndCSRF(t *testing.T) {
 	r := require.New(t)
 	store, err := OpenStore(t.TempDir() + "/test.json")

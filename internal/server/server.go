@@ -546,25 +546,20 @@ func (s *Server) chooseID(requested string) (string, error) {
 	return "", errors.New("could not allocate tunnel id")
 }
 
-func (s *Server) countUserTunnels(login string) int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *Server) registerTunnel(t *tunnel) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	count := 0
-	for _, t := range s.tunnels {
-		if t.owner == login {
+	for _, existing := range s.tunnels {
+		if existing.owner == t.owner {
 			count++
 		}
 	}
-	return count
-}
-
-func (s *Server) registerTunnel(t *tunnel) error {
-	if s.countUserTunnels(t.owner) >= s.cfg.MaxTunnelsPerUser {
+	if count >= s.cfg.MaxTunnelsPerUser {
 		return fmt.Errorf("maximum number of tunnels (%d) reached for user %s", s.cfg.MaxTunnelsPerUser, t.owner)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	key := strings.ToLower(t.host)
 	if _, exists := s.tunnels[key]; exists {
 		return fmt.Errorf("host %q is already connected", t.host)
@@ -639,10 +634,14 @@ func (t *tunnel) failPending() {
 	t.pendingMu.Lock()
 	defer t.pendingMu.Unlock()
 	for streamID, ch := range t.pending {
-		ch <- protocol.Message{
+		msg := protocol.Message{
 			Type:     protocol.TypeResponse,
 			StreamID: streamID,
 			Error:    "tunnel disconnected",
+		}
+		select {
+		case ch <- msg:
+		default:
 		}
 		delete(t.pending, streamID)
 	}
