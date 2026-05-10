@@ -59,9 +59,20 @@ func runServer(args []string, log *slog.Logger) error {
 	githubClientID := fs.String("github-client-id", os.Getenv("RGROK_GITHUB_CLIENT_ID"), "GitHub OAuth app client ID")
 	githubClientSecret := fs.String("github-client-secret", os.Getenv("RGROK_GITHUB_CLIENT_SECRET"), "GitHub OAuth app client secret")
 	maxBody := fs.Int64("max-body", 32<<20, "maximum request or response body bytes")
+	maxTunnelsPerUser := fs.Int("max-tunnels-per-user", 0, "maximum tunnels per user (0 = default 5)")
+	logFormat := fs.String("log-format", "text", "log format: text or json")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+
+	var handler slog.Handler
+	switch *logFormat {
+	case "json":
+		handler = slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
+	default:
+		handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
+	}
+	log = slog.New(handler)
 
 	s, err := server.New(server.Config{
 		Addr:               *addr,
@@ -73,6 +84,7 @@ func runServer(args []string, log *slog.Logger) error {
 		GitHubClientID:     *githubClientID,
 		GitHubClientSecret: *githubClientSecret,
 		MaxBodyBytes:       *maxBody,
+		MaxTunnelsPerUser:  *maxTunnelsPerUser,
 		Logger:             log,
 	})
 	if err != nil {

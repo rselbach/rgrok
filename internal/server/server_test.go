@@ -528,3 +528,74 @@ func TestProtocolTypesUnified(t *testing.T) {
 	_ = protocol.DeviceStartResponse{ID: "test"}
 	_ = protocol.DevicePollResponse{Status: "pending"}
 }
+
+func TestHealthAndReady(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store:   store,
+		tunnels: make(map[string]*tunnel),
+	}
+
+	for _, path := range []string{"/healthz", "/ready"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		if path == "/healthz" {
+			s.handleHealthz(rec, req)
+		} else {
+			s.handleReady(rec, req)
+		}
+		r.Equal(http.StatusOK, rec.Code)
+		r.Contains(rec.Body.String(), "ok")
+	}
+}
+
+func TestMetrics(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:            "localhost:7000",
+			PublicScheme:      "http",
+			MaxTunnelsPerUser: 5,
+			Logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store:   store,
+		tunnels: make(map[string]*tunnel),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	req.Host = "localhost:7000"
+	rec := httptest.NewRecorder()
+	s.handleMetrics(rec, req)
+	r.Equal(http.StatusOK, rec.Code)
+	r.Contains(rec.Body.String(), "tunnels_active")
+	r.Contains(rec.Body.String(), "tunnels_total")
+	r.Contains(rec.Body.String(), "requests_total")
+
+	// Connect a tunnel and verify metrics update.
+	r.NoError(s.registerTunnel(&tunnel{id: "m1", host: "m1.localhost:7000", owner: "abed"}))
+
+	rec = httptest.NewRecorder()
+	s.handleMetrics(rec, req)
+	r.Equal(http.StatusOK, rec.Code)
+	r.Contains(rec.Body.String(), `"tunnels_active":1`)
+	r.Contains(rec.Body.String(), `"tunnels_total":1`)
+
+	s.unregisterTunnel(&tunnel{id: "m1", host: "m1.localhost:7000", owner: "abed"})
+
+	rec = httptest.NewRecorder()
+	s.handleMetrics(rec, req)
+	r.Equal(http.StatusOK, rec.Code)
+	r.Contains(rec.Body.String(), `"tunnels_active":0`)
+	r.Contains(rec.Body.String(), `"tunnels_total":1`)
+}

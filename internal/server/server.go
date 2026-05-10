@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -66,7 +67,10 @@ type Server struct {
 	deviceLogins    map[string]*deviceLogin
 	deviceLoginLast map[string]time.Time
 
-	nextStream atomic.Uint64
+	nextStream    atomic.Uint64
+	requestsTotal atomic.Uint64
+	tunnelsActive atomic.Int64
+	tunnelsTotal  atomic.Uint64
 }
 
 type deviceLogin struct {
@@ -146,6 +150,9 @@ func New(cfg Config) (*Server, error) {
 
 func (s *Server) Run() error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.HandleFunc("/ready", s.handleReady)
+	mux.HandleFunc("/api/metrics", s.baseHostOnly(s.handleMetrics))
 	mux.HandleFunc(s.cfg.ConnectPath, s.baseHostOnly(s.handleConnect))
 	mux.HandleFunc("/api/login/device/start", s.baseHostOnly(s.handleDeviceLoginStart))
 	mux.HandleFunc("/api/login/device/poll", s.baseHostOnly(s.handleDeviceLoginPoll))
@@ -221,11 +228,31 @@ func (w *responseWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"requests_total": s.requestsTotal.Load(),
+		"tunnels_active": s.tunnelsActive.Load(),
+		"tunnels_total":  s.tunnelsTotal.Load(),
+	})
+}
+
 func (s *Server) logRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rw := &responseWriter{ResponseWriter: w}
 		next.ServeHTTP(rw, r)
+		s.requestsTotal.Add(1)
 		s.cfg.Logger.Info("request",
 			"method", r.Method,
 			"path", r.URL.Path,
@@ -527,6 +554,8 @@ func (s *Server) registerTunnel(t *tunnel) error {
 		return fmt.Errorf("host %q is already connected", t.host)
 	}
 	s.tunnels[key] = t
+	s.tunnelsActive.Add(1)
+	s.tunnelsTotal.Add(1)
 	return nil
 }
 
@@ -534,6 +563,7 @@ func (s *Server) unregisterTunnel(t *tunnel) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.tunnels, strings.ToLower(t.host))
+	s.tunnelsActive.Add(-1)
 }
 
 func (t *tunnel) writeLoop() {
