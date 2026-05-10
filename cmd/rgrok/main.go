@@ -53,6 +53,7 @@ func runServer(args []string, log *slog.Logger) error {
 	addr := fs.String("addr", ":7000", "HTTP listen address")
 	domain := fs.String("domain", "localhost:7000", "public tunnel domain, without scheme")
 	publicScheme := fs.String("scheme", "http", "public URL scheme")
+	behindProxy := fs.Bool("behind-proxy", false, "server is behind a trusted reverse proxy")
 	connectPath := fs.String("connect-path", "/api/connect", "WebSocket tunnel path")
 	dataPath := fs.String("data", "rgrok.json", "path to persistent server data")
 	githubClientID := fs.String("github-client-id", os.Getenv("RGROK_GITHUB_CLIENT_ID"), "GitHub OAuth app client ID")
@@ -66,6 +67,7 @@ func runServer(args []string, log *slog.Logger) error {
 		Addr:               *addr,
 		Domain:             *domain,
 		PublicScheme:       *publicScheme,
+		BehindProxy:        *behindProxy,
 		ConnectPath:        *connectPath,
 		DataPath:           *dataPath,
 		GitHubClientID:     *githubClientID,

@@ -52,6 +52,7 @@ type Config struct {
 	Logger             *slog.Logger
 	ShutdownTimeout    time.Duration
 	MaxTunnelsPerUser  int
+	BehindProxy        bool
 }
 
 type Server struct {
@@ -100,6 +101,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.PublicScheme == "" {
 		cfg.PublicScheme = "http"
+	}
+	if cfg.PublicScheme == "https" || cfg.BehindProxy {
+		cfg.PublicScheme = "https"
 	}
 	if cfg.ConnectPath == "" {
 		cfg.ConnectPath = "/api/connect"
@@ -230,11 +234,19 @@ func (s *Server) logRequest(next http.Handler) http.Handler {
 	})
 }
 
+func (s *Server) cookieSecure() bool {
+	return s.cfg.PublicScheme == "https" || s.cfg.BehindProxy
+}
+
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()")
+		if s.cfg.PublicScheme == "https" || s.cfg.BehindProxy {
+			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -371,7 +383,7 @@ func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
 
 	headers := httputil.CloneHeader(r.Header)
 	httputil.RemoveHopHeaders(headers)
-	addForwardedHeaders(headers, r)
+	s.addForwardedHeaders(headers, r)
 
 	req := protocol.Message{
 		Type:     protocol.TypeRequest,
@@ -379,7 +391,7 @@ func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
 		Method:   r.Method,
 		Path:     r.URL.RequestURI(),
 		Host:     r.Host,
-		Scheme:   schemeFromRequest(r),
+		Scheme:   s.schemeFromRequest(r),
 		Header:   headers,
 		Body:     body,
 	}
@@ -452,7 +464,7 @@ func (s *Server) writeIndexOrNotFound(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/dashboard", http.StatusFound)
 			return
 		}
-		clearCookie(w, sessionCookieName, s.cfg.PublicScheme == "https")
+		clearCookie(w, sessionCookieName, s.cookieSecure())
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -660,7 +672,15 @@ func writeClose(conn *websocket.Conn, code int, text string) {
 	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(code, text))
 }
 
-func clientIP(r *http.Request) string {
+func (s *Server) clientIP(r *http.Request) string {
+	if s.cfg.BehindProxy {
+		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+			if i := strings.Index(fwd, ","); i != -1 {
+				return strings.TrimSpace(fwd[:i])
+			}
+			return fwd
+		}
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
@@ -668,23 +688,29 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
-func addForwardedHeaders(h http.Header, r *http.Request) {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	if prior := h.Get("X-Forwarded-For"); prior != "" {
-		h.Set("X-Forwarded-For", prior+", "+host)
+func (s *Server) addForwardedHeaders(h http.Header, r *http.Request) {
+	h.Del("X-Forwarded-For")
+	h.Del("X-Forwarded-Host")
+	h.Del("X-Forwarded-Proto")
+
+	if s.cfg.BehindProxy {
+		if prior := r.Header.Get("X-Forwarded-For"); prior != "" {
+			h.Set("X-Forwarded-For", prior)
+		} else {
+			h.Set("X-Forwarded-For", s.clientIP(r))
+		}
 	} else {
-		h.Set("X-Forwarded-For", host)
+		h.Set("X-Forwarded-For", s.clientIP(r))
 	}
 	h.Set("X-Forwarded-Host", r.Host)
-	h.Set("X-Forwarded-Proto", schemeFromRequest(r))
+	h.Set("X-Forwarded-Proto", s.schemeFromRequest(r))
 }
 
-func schemeFromRequest(r *http.Request) string {
-	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
-		return proto
+func (s *Server) schemeFromRequest(r *http.Request) string {
+	if s.cfg.BehindProxy {
+		if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+			return proto
+		}
 	}
 	if r.TLS != nil {
 		return "https"

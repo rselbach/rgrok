@@ -34,7 +34,7 @@ func (s *Server) handleGitHubLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    state,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   s.cfg.PublicScheme == "https",
+		Secure:   s.cookieSecure(),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   600,
 	})
@@ -47,7 +47,7 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid login state", http.StatusBadRequest)
 		return
 	}
-	clearCookie(w, stateCookieName, s.cfg.PublicScheme == "https")
+	clearCookie(w, stateCookieName, s.cookieSecure())
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
@@ -81,7 +81,7 @@ func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
 		Value:    session.ID,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   s.cfg.PublicScheme == "https",
+		Secure:   s.cookieSecure(),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  session.ExpiresAt,
 	})
@@ -92,7 +92,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		_ = s.store.DeleteSession(cookie.Value)
 	}
-	clearCookie(w, sessionCookieName, s.cfg.PublicScheme == "https")
+	clearCookie(w, sessionCookieName, s.cookieSecure())
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -217,7 +217,7 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (StoredS
 	}
 	session, ok := s.store.Session(cookie.Value)
 	if !ok {
-		clearCookie(w, sessionCookieName, s.cfg.PublicScheme == "https")
+		clearCookie(w, sessionCookieName, s.cookieSecure())
 		http.Redirect(w, r, "/login/github", http.StatusFound)
 		return StoredSession{}, false
 	}

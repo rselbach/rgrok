@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log/slog"
@@ -224,6 +225,128 @@ func TestDashboardMutationsRequirePostAndCSRF(t *testing.T) {
 	user, ok := store.IsAllowed("troy")
 	r.True(ok)
 	r.True(user.Admin)
+}
+
+func TestSchemeFromRequest(t *testing.T) {
+	tests := map[string]struct {
+		behindProxy bool
+		tls         bool
+		fwdProto    string
+		want        string
+	}{
+		"direct http":                         {behindProxy: false, tls: false, fwdProto: "", want: "http"},
+		"direct https":                        {behindProxy: false, tls: true, fwdProto: "", want: "https"},
+		"direct ignores forwarded proto":      {behindProxy: false, tls: false, fwdProto: "https", want: "http"},
+		"behind proxy trusts forwarded proto": {behindProxy: true, tls: false, fwdProto: "https", want: "https"},
+		"behind proxy falls back to remote":   {behindProxy: true, tls: true, fwdProto: "", want: "https"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			r := require.New(t)
+			s := &Server{cfg: Config{BehindProxy: tc.behindProxy}}
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.fwdProto != "" {
+				req.Header.Set("X-Forwarded-Proto", tc.fwdProto)
+			}
+			if tc.tls {
+				req.TLS = &tls.ConnectionState{}
+			}
+
+			r.Equal(tc.want, s.schemeFromRequest(req))
+		})
+	}
+}
+
+func TestAddForwardedHeadersStripsUntrusted(t *testing.T) {
+	r := require.New(t)
+
+	s := &Server{cfg: Config{BehindProxy: false}}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Forwarded-For", "1.2.3.4")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("X-Forwarded-Host", "evil.com")
+
+	h := make(http.Header)
+	h.Set("X-Forwarded-For", "5.6.7.8")
+	s.addForwardedHeaders(h, req)
+
+	// The original spoofed header on h should be replaced.
+	r.Equal("192.0.2.1", h.Get("X-Forwarded-For"))
+	r.Equal("example.com", h.Get("X-Forwarded-Host"))
+	r.Equal("http", h.Get("X-Forwarded-Proto"))
+}
+
+func TestAddForwardedHeadersTrustsProxy(t *testing.T) {
+	r := require.New(t)
+
+	s := &Server{cfg: Config{BehindProxy: true}}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	h := make(http.Header)
+	s.addForwardedHeaders(h, req)
+
+	r.Equal("203.0.113.1", h.Get("X-Forwarded-For"))
+	r.Equal("https", h.Get("X-Forwarded-Proto"))
+}
+
+func TestSecurityHeadersWithHSTS(t *testing.T) {
+	r := require.New(t)
+
+	s := &Server{cfg: Config{PublicScheme: "https", BehindProxy: false, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+
+	s.securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rec, req)
+
+	r.Equal(http.StatusOK, rec.Code)
+	r.NotEmpty(rec.Header().Get("Strict-Transport-Security"))
+	r.NotEmpty(rec.Header().Get("Permissions-Policy"))
+}
+
+func TestCookieSecureBehindProxy(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			BehindProxy:  true,
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store: store,
+	}
+
+	r.NoError(store.UpsertUser("abed", false))
+	session, err := store.CreateSession("abed", false)
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/logout", nil)
+	req.Host = "localhost:7000"
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	rec := httptest.NewRecorder()
+
+	s.handleLogout(rec, req)
+
+	// When behind proxy, cookies should be Secure even if PublicScheme is http.
+	var found bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			found = true
+			r.True(c.Secure)
+		}
+	}
+	r.True(found, "expected session cookie to be cleared with Secure flag")
 }
 
 func TestDeviceLoginRateLimit(t *testing.T) {

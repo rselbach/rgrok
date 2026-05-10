@@ -27,7 +27,7 @@ func (s *Server) handleDeviceLoginStart(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	s.mu.Lock()
 	if len(s.deviceLogins) >= maxDeviceLogins {
 		s.mu.Unlock()
