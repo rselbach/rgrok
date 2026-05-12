@@ -1,0 +1,51 @@
+version: 2
+
+project_name: rgrok
+
+builds:
+  - id: rgrok
+    main: ./cmd/rgrok
+    binary: rgrok
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: rgrok
+    ids:
+      - rgrok
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+
+brews:
+  - name: rgrok
+    ids:
+      - rgrok
+    repository:
+      owner: rselbach
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/rselbach/rgrok"
+    description: "Small HTTP tunneling tool"
+    license: MIT
+    commit_author:
+      name: "github-actions[bot]"
+      email: "41898282+github-actions[bot]@users.noreply.github.com"
+    commit_msg_template: "Update rgrok to {{ .Tag }}"
+    install: |
+      bin.install "rgrok"
+    test: |
+      system "#{bin}/rgrok", "--help"
