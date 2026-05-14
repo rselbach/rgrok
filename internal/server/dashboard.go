@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,6 +17,24 @@ type dashboardTunnel struct {
 	ID        string
 	PublicURL string
 	Owner     string
+}
+
+type dashboardAPITokenOption struct {
+	Days    int
+	Label   string
+	Default bool
+}
+
+type dashboardViewData struct {
+	Session                StoredSession
+	Tunnels                []dashboardTunnel
+	Users                  []StoredUser
+	APITokens              []StoredClientToken
+	BaseURL                string
+	APITokenOptions        []dashboardAPITokenOption
+	CreatedAPIToken        string
+	CreatedAPITokenName    string
+	CreatedAPITokenExpires time.Time
 }
 
 func (s *Server) handleGitHubLogin(w http.ResponseWriter, r *http.Request) {
@@ -102,26 +121,76 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.renderDashboard(w, session, "", "", time.Time{})
+}
 
-	data := struct {
-		Session StoredSession
-		Tunnels []dashboardTunnel
-		Users   []StoredUser
-		BaseURL string
-	}{
-		Session: session,
-		Tunnels: s.visibleTunnels(session),
-		BaseURL: s.cfg.PublicScheme + "://" + s.cfg.Domain,
+func (s *Server) renderDashboard(w http.ResponseWriter, session StoredSession, createdAPIToken string, createdAPITokenName string, createdAPITokenExpires time.Time) {
+	data := dashboardViewData{
+		Session:                session,
+		Tunnels:                s.visibleTunnels(session),
+		APITokens:              s.store.ListClientTokensForUser(session.Login),
+		BaseURL:                s.cfg.PublicScheme + "://" + s.cfg.Domain,
+		APITokenOptions:        apiTokenExpirationOptions(),
+		CreatedAPIToken:        createdAPIToken,
+		CreatedAPITokenName:    createdAPITokenName,
+		CreatedAPITokenExpires: createdAPITokenExpires,
 	}
 	if session.Admin {
 		data.Users = s.store.ListUsers()
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' https://unpkg.com; style-src 'self' 'unsafe-inline'")
 	if err := dashboardTemplate.Execute(w, data); err != nil {
 		s.cfg.Logger.Error("dashboard render failed", "err", err)
 	}
+}
+
+func (s *Server) handleCreateAPIToken(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireCSRF(w, r, session) {
+		return
+	}
+
+	name := strings.TrimSpace(r.PostForm.Get("name"))
+	days, ok := allowedAPITokenExpirationDays(r.PostForm.Get("expires_in_days"))
+	if !ok {
+		http.Error(w, "invalid token expiration", http.StatusBadRequest)
+		return
+	}
+	clientToken, err := s.store.CreateClientTokenWithNameAndLifetime(session.Login, session.Admin, name, time.Duration(days)*24*time.Hour)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.cfg.Logger.Info("api token created", "login", session.Login, "name", clientToken.Name, "expires_at", clientToken.ExpiresAt)
+	s.renderDashboard(w, session, clientToken.PlainToken, clientToken.Name, clientToken.ExpiresAt)
+}
+
+func (s *Server) handleDeleteAPIToken(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireCSRF(w, r, session) {
+		return
+	}
+	deleted, err := s.store.RevokeClientTokenForUser(session.Login, r.PostForm.Get("token_hash"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !deleted {
+		http.NotFound(w, r)
+		return
+	}
+	s.cfg.Logger.Info("api token revoked", "login", session.Login)
+	http.Redirect(w, r, "/dashboard#api-tokens", http.StatusFound)
 }
 
 func (s *Server) handleAddUser(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +261,27 @@ func (s *Server) handleRevokeSessions(w http.ResponseWriter, r *http.Request) {
 	clearCookie(w, sessionCookieName, s.cookieSecure())
 	s.cfg.Logger.Info("sessions revoked", "login", session.Login)
 	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func apiTokenExpirationOptions() []dashboardAPITokenOption {
+	return []dashboardAPITokenOption{
+		{Days: 7, Label: "7 days"},
+		{Days: 30, Label: "30 days"},
+		{Days: 60, Label: "60 days"},
+		{Days: 90, Label: "90 days", Default: true},
+	}
+}
+
+func allowedAPITokenExpirationDays(raw string) (int, bool) {
+	for _, option := range apiTokenExpirationOptions() {
+		if raw == "" && option.Default {
+			return option.Days, true
+		}
+		if raw == strconv.Itoa(option.Days) {
+			return option.Days, true
+		}
+	}
+	return 0, false
 }
 
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (StoredSession, bool) {

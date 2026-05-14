@@ -143,7 +143,7 @@ func (s *Server) handleDeviceLoginPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	s.deleteDeviceLogin(id)
 	s.cfg.Logger.Info("device login complete", "id", id, "login", clientToken.Login)
-	writeJSON(w, protocol.DevicePollResponse{Status: "complete", Token: clientToken.Token, Login: clientToken.Login})
+	writeJSON(w, protocol.DevicePollResponse{Status: "complete", Token: clientToken.PlainToken, Login: clientToken.Login})
 }
 
 func (s *Server) deviceLogin(id string) (deviceLogin, bool) {

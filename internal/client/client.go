@@ -37,6 +37,13 @@ type Config struct {
 	MaxBodyBytes     int64
 	Logger           *slog.Logger
 	ReconnectTimeout time.Duration
+	Output           io.Writer
+	OnRegistered     func(Registration)
+}
+
+type Registration struct {
+	TunnelID  string
+	PublicURL string
 }
 
 type Client struct {
@@ -56,6 +63,9 @@ func New(cfg Config) *Client {
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
+	}
+	if cfg.Output == nil {
+		cfg.Output = os.Stdout
 	}
 	if cfg.ReconnectTimeout <= 0 {
 		cfg.ReconnectTimeout = 30 * time.Second
@@ -91,7 +101,12 @@ func isTerminal(err error) bool {
 func (c *Client) Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	return c.RunContext(ctx)
+}
 
+// RunContext connects to the rgrok server without installing signal handlers.
+// This is intended for callers embedding the client in another process.
+func (c *Client) RunContext(ctx context.Context) error {
 	backoff := time.Duration(0)
 	for {
 		select {
@@ -171,7 +186,14 @@ func (c *Client) runOnce(ctx context.Context) error {
 		return fmt.Errorf("%w: expected tunnel_registered, got %q", errTerminal, registered.Type)
 	}
 
-	fmt.Fprintf(os.Stdout, "Connected\nForwarding %s -> %s:%d\n", registered.PublicURL, c.cfg.LocalHost, c.cfg.LocalPort)
+	registration := Registration{
+		TunnelID:  registered.TunnelID,
+		PublicURL: registered.PublicURL,
+	}
+	if c.cfg.OnRegistered != nil {
+		c.cfg.OnRegistered(registration)
+	}
+	fmt.Fprintf(c.cfg.Output, "Connected\nForwarding %s -> %s:%d\n", registered.PublicURL, c.cfg.LocalHost, c.cfg.LocalPort)
 
 	send := make(chan protocol.Message, sendChannelSize)
 	done := make(chan struct{})

@@ -46,7 +46,7 @@ body {
   background: var(--bg);
   color: var(--text);
 }
-button, input { font: inherit; color: inherit; }
+button, input, select { font: inherit; color: inherit; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
@@ -337,12 +337,14 @@ td.cell-widget { overflow: visible; }
   align-items: center;
   margin: 0;
 }
-.form-inline input[type="text"] {
+.form-inline input[type="text"],
+.form-inline select {
   padding: 6px 10px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   font-size: 13px;
   min-width: 180px;
+  background: var(--card);
 }
 .form-inline label {
   display: flex;
@@ -351,6 +353,104 @@ td.cell-widget { overflow: visible; }
   font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
+}
+.token-panel {
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-soft);
+}
+.token-panel label {
+  display: block;
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.token-panel input {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text-strong);
+  font: 12.5px/1.4 var(--mono);
+}
+.token-meta {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+.token-meta code {
+  font-family: var(--mono);
+  color: var(--text-strong);
+}
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.modal:target { display: flex; }
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 12, 13, .42);
+}
+.modal-card {
+  position: relative;
+  z-index: 1;
+  width: min(420px, 100%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  box-shadow: 0 18px 48px rgba(15, 23, 42, .18);
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.modal-header h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 15px;
+}
+.modal-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+.field label {
+  display: block;
+  margin: 0 0 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.field input,
+.field select {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 16px 16px;
 }
 
 @media (max-width: 768px) {
@@ -394,6 +494,17 @@ td.cell-widget { overflow: visible; }
         </span>
         Tunnels
         <span class="badge">{{len .Tunnels}}</span>
+      </a>
+      <a class="side-item" href="#api-tokens">
+        <span class="icon" aria-hidden="true">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="5.5" cy="8" r="2.5"/>
+            <path d="M8 8h6"/>
+            <path d="M11 8v2"/>
+            <path d="M13 8v2"/>
+          </svg>
+        </span>
+        API tokens
       </a>
       {{if .Session.Admin}}
       <a class="side-item" href="#users">
@@ -516,6 +627,96 @@ td.cell-widget { overflow: visible; }
         {{end}}
       </div>
     </section>
+
+    <section class="card" id="api-tokens">
+      <div class="card-header">
+        <h2>API tokens</h2>
+        <a href="#create-api-token" class="btn btn-primary btn-sm"><span class="plus">+</span> Create token</a>
+      </div>
+      {{if .CreatedAPIToken}}
+      <div class="token-panel">
+        <label for="created-api-token">RGROK_API_TOKEN</label>
+        <input id="created-api-token" type="text" readonly value="{{.CreatedAPIToken}}">
+        <div class="token-meta">
+          <span>{{.CreatedAPITokenName}}</span>
+          <span>Expires {{.CreatedAPITokenExpires.Format "2006-01-02 15:04 UTC"}}</span>
+          <span><code>RGROK_API_TOKEN</code></span>
+        </div>
+      </div>
+      {{end}}
+      <div class="table-wrap">
+        {{if .APITokens}}
+        <table>
+          <colgroup><col><col style="width: 190px"><col style="width: 190px"><col style="width: 80px"></colgroup>
+          <thead>
+            <tr><th>Name</th><th>Created</th><th>Expires</th><th class="col-actions">Actions</th></tr>
+          </thead>
+          <tbody>
+            {{range .APITokens}}
+            <tr>
+              <td><div class="row-title">{{.Name}}</div></td>
+              <td>{{.CreatedAt.Format "2006-01-02 15:04 UTC"}}</td>
+              <td>{{.ExpiresAt.Format "2006-01-02 15:04 UTC"}}</td>
+              <td class="col-actions cell-widget">
+                <div class="row-actions">
+                  <form method="post" action="/dashboard/api-tokens/delete">
+                    <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
+                    <input type="hidden" name="token_hash" value="{{.TokenHash}}">
+                    <button class="icon-btn danger" type="submit" title="Revoke" aria-label="Revoke">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M2 4h12"/>
+                        <path d="M5 4V2.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V4"/>
+                        <path d="M4.5 4l.6 8a1 1 0 0 0 1 1h4.8a1 1 0 0 0 1-1l.6-8"/>
+                      </svg>
+                    </button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{else}}
+        <div style="padding: 32px 14px; text-align: center; color: var(--muted);">
+          No API tokens.
+        </div>
+        {{end}}
+      </div>
+    </section>
+
+    <div class="modal" id="create-api-token" role="dialog" aria-modal="true" aria-labelledby="create-api-token-title">
+      <a class="modal-backdrop" href="#api-tokens" aria-label="Close"></a>
+      <form method="post" action="/dashboard/api-tokens/create" class="modal-card">
+        <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
+        <div class="modal-header">
+          <h3 id="create-api-token-title">Create API token</h3>
+          <a class="icon-btn" href="#api-tokens" title="Close" aria-label="Close">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+              <path d="M4 4l8 8"/>
+              <path d="M12 4l-8 8"/>
+            </svg>
+          </a>
+        </div>
+        <div class="modal-body">
+          <div class="field">
+            <label for="api-token-name">Name</label>
+            <input id="api-token-name" type="text" name="name" maxlength="80" required>
+          </div>
+          <div class="field">
+            <label for="api-token-expiration">Expires</label>
+            <select id="api-token-expiration" name="expires_in_days">
+              {{range .APITokenOptions}}
+              <option value="{{.Days}}"{{if .Default}} selected{{end}}>{{.Label}}</option>
+              {{end}}
+            </select>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <a class="btn btn-sm" href="#api-tokens">Cancel</a>
+          <button type="submit" class="btn btn-primary btn-sm"><span class="plus">+</span> Create token</button>
+        </div>
+      </form>
+    </div>
 
     {{if .Session.Admin}}
     <section class="card" id="users">

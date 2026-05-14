@@ -70,6 +70,33 @@ Connect a client:
 rgrok connect 1234 --server wss://rgrok.rselbach.com/api/connect
 ```
 
+You can also create named API tokens from the dashboard and pass one directly to
+the client. API tokens expire after at most 90 days and are stored as hashes on
+the server.
+
+```sh
+RGROK_API_TOKEN=... rgrok connect 1234 --server wss://rgrok.rselbach.com/api/connect
+```
+
+Go applications can manage their own tunnel with the public client package:
+
+```go
+import rgrokclient "github.com/rselbach/rgrok/client"
+
+tun, err := rgrokclient.Start(ctx, rgrokclient.Config{
+	ServerBaseURL: "https://rgrok.rselbach.com",
+	Token:         os.Getenv("RGROK_API_TOKEN"),
+	Name:          "my-app-dev",
+	LocalPort:     1234,
+})
+if err != nil {
+	return err
+}
+defer tun.Close()
+
+publicBaseURL := tun.PublicURL
+```
+
 For service-style clients, set `RGROK_CONFIG` while running `rgrok login` to
 write the token to a predictable file:
 

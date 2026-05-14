@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,7 +18,7 @@ import (
 )
 
 func main() {
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	log := newLogger(false, "text")
 
 	if len(os.Args) < 2 {
 		usage()
@@ -61,19 +62,13 @@ func runServer(args []string, log *slog.Logger) error {
 	githubClientSecret := fs.String("github-client-secret", os.Getenv("RGROK_GITHUB_CLIENT_SECRET"), "GitHub OAuth app client secret")
 	maxBody := fs.Int64("max-body", protocol.MaxBodyBytesDefault, "maximum request or response body bytes")
 	maxTunnelsPerUser := fs.Int("max-tunnels-per-user", 0, "maximum tunnels per user (0 = default 5)")
+	showLogs := fs.Bool("logs", false, "show server logs")
 	logFormat := fs.String("log-format", "text", "log format: text or json")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	var handler slog.Handler
-	switch *logFormat {
-	case "json":
-		handler = slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
-	default:
-		handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
-	}
-	log = slog.New(handler)
+	log = newLogger(*showLogs, *logFormat)
 
 	s, err := server.New(server.Config{
 		Addr:               *addr,
@@ -97,9 +92,11 @@ func runServer(args []string, log *slog.Logger) error {
 func runLogin(args []string, log *slog.Logger) error {
 	fs := flag.NewFlagSet("login", flag.ExitOnError)
 	serverBaseURL := fs.String("server", "https://rgrok.rselbach.com", "rgrok server base URL")
+	showLogs := fs.Bool("logs", false, "show login logs")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	log = newLogger(*showLogs, "text")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -158,10 +155,11 @@ func runConnect(args []string, log *slog.Logger) error {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
 	serverURL := fs.String("server", "", "rgrok server WebSocket URL")
 	name := fs.String("name", "", "requested tunnel subdomain/name")
-	token := fs.String("token", "", "GitHub access token override")
+	token := fs.String("token", "", "API token override")
 	localHost := fs.String("local-host", "127.0.0.1", "local host to forward to")
 	preserveHost := fs.Bool("preserve-host", false, "send the public Host header to the local app")
 	maxBody := fs.Int64("max-body", protocol.MaxBodyBytesDefault, "maximum request or response body bytes")
+	showLogs := fs.Bool("logs", false, "show client logs")
 
 	var portArg string
 	parseArgs := args
@@ -173,6 +171,7 @@ func runConnect(args []string, log *slog.Logger) error {
 	if err := fs.Parse(parseArgs); err != nil {
 		return err
 	}
+	log = newLogger(*showLogs, "text")
 	if portArg == "" {
 		if fs.NArg() != 1 {
 			connectUsage()
@@ -201,6 +200,9 @@ func runConnect(args []string, log *slog.Logger) error {
 
 	authToken := *token
 	if authToken == "" {
+		authToken = os.Getenv("RGROK_API_TOKEN")
+	}
+	if authToken == "" {
 		cfg, err := client.LoadFileConfig()
 		if err != nil {
 			return err
@@ -208,7 +210,7 @@ func runConnect(args []string, log *slog.Logger) error {
 		authToken = cfg.Token
 	}
 	if authToken == "" {
-		return fmt.Errorf("not logged in; run `rgrok login --server <server-url>` first")
+		return fmt.Errorf("not logged in; set RGROK_API_TOKEN or run `rgrok login --server <server-url>` first")
 	}
 
 	c := client.New(client.Config{
@@ -270,14 +272,26 @@ func runStatus() error {
 	return nil
 }
 
+func newLogger(enabled bool, format string) *slog.Logger {
+	if !enabled {
+		return slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
+	if format == "json" {
+		return slog.New(slog.NewJSONHandler(os.Stderr, opts))
+	}
+	return slog.New(slog.NewTextHandler(os.Stderr, opts))
+}
+
 func connectUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: rgrok connect [flags] <local-port>
 Flags:
   -server string     rgrok server WebSocket URL (default from login config or wss://rgrok.rselbach.com/api/connect)
   -name string       requested tunnel subdomain
-  -token string      auth token override
+  -token string      API token override (or set RGROK_API_TOKEN)
   -local-host string local host to forward to (default 127.0.0.1)
   -preserve-host     send public Host header to local app
+  -logs              show client logs
   -max-body int      max body bytes (default 33554432)`)
 }
 

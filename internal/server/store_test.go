@@ -1,6 +1,9 @@
 package server
 
 import (
+	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,8 +66,124 @@ func TestDeleteUser(t *testing.T) {
 	r.False(ok)
 	_, ok = store.Session(session.ID)
 	r.False(ok)
-	_, ok = store.ClientToken(token.Token)
+	_, ok = store.ClientToken(token.PlainToken)
 	r.False(ok)
+}
+
+func TestClientTokenStoredAsHash(t *testing.T) {
+	r := require.New(t)
+	path := t.TempDir() + "/test.json"
+	store, err := OpenStore(path)
+	r.NoError(err)
+
+	token, err := store.CreateClientTokenWithNameAndLifetime("abed", false, "Work laptop", 30*24*time.Hour)
+	r.NoError(err)
+	r.NotEmpty(token.PlainToken)
+	r.NotEmpty(token.TokenHash)
+	r.Equal("Work laptop", token.Name)
+	r.Empty(token.Token)
+
+	raw, err := os.ReadFile(path)
+	r.NoError(err)
+	r.NotContains(string(raw), token.PlainToken)
+	r.Contains(string(raw), `"token_hash"`)
+	r.Contains(string(raw), `"name": "Work laptop"`)
+}
+
+func TestListClientTokensForUserAllowsMultipleNamedTokens(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	first, err := store.CreateClientTokenWithNameAndLifetime("abed", false, "Laptop", 30*24*time.Hour)
+	r.NoError(err)
+	time.Sleep(time.Millisecond)
+	second, err := store.CreateClientTokenWithNameAndLifetime("abed", false, "CI deploy", 7*24*time.Hour)
+	r.NoError(err)
+	_, err = store.CreateClientTokenWithNameAndLifetime("troy", false, "Other user", 7*24*time.Hour)
+	r.NoError(err)
+
+	tokens := store.ListClientTokensForUser("ABED")
+	r.Len(tokens, 2)
+	r.Equal("CI deploy", tokens[0].Name)
+	r.Equal("Laptop", tokens[1].Name)
+	r.Empty(tokens[0].PlainToken)
+	r.Empty(tokens[1].PlainToken)
+
+	_, ok := store.ClientToken(first.PlainToken)
+	r.True(ok)
+	_, ok = store.ClientToken(second.PlainToken)
+	r.True(ok)
+}
+
+func TestCreateClientTokenRequiresName(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	_, err = store.CreateClientTokenWithNameAndLifetime("abed", false, "", 30*24*time.Hour)
+	r.Error(err)
+	r.Contains(err.Error(), "token name is required")
+}
+
+func TestRevokeClientTokenForUser(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	abedToken, err := store.CreateClientTokenWithNameAndLifetime("abed", false, "Laptop", 30*24*time.Hour)
+	r.NoError(err)
+	troyToken, err := store.CreateClientTokenWithNameAndLifetime("troy", false, "Deploy", 30*24*time.Hour)
+	r.NoError(err)
+
+	deleted, err := store.RevokeClientTokenForUser("abed", troyToken.TokenHash)
+	r.NoError(err)
+	r.False(deleted)
+	_, ok := store.ClientToken(troyToken.PlainToken)
+	r.True(ok)
+
+	deleted, err = store.RevokeClientTokenForUser("abed", abedToken.TokenHash)
+	r.NoError(err)
+	r.True(deleted)
+	_, ok = store.ClientToken(abedToken.PlainToken)
+	r.False(ok)
+}
+
+func TestOpenStoreMigratesLegacyPlaintextClientToken(t *testing.T) {
+	r := require.New(t)
+	path := t.TempDir() + "/test.json"
+	expires := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	created := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	legacyToken := "legacy-plaintext-token"
+	raw := fmt.Sprintf(`{
+		"users": {},
+		"sessions": {},
+		"client_tokens": {
+			%q: {
+				"token": %q,
+				"login": "abed",
+				"admin": false,
+				"created_at": %q,
+				"expires_at": %q
+			}
+		}
+	}`, legacyToken, legacyToken, created, expires)
+	r.NoError(os.WriteFile(path, []byte(raw), 0o600))
+
+	store, err := OpenStore(path)
+	r.NoError(err)
+
+	ct, ok := store.ClientToken(legacyToken)
+	r.True(ok)
+	r.Equal("abed", ct.Login)
+	r.Equal("Legacy token", ct.Name)
+	r.Empty(ct.Token)
+	r.NotEmpty(ct.TokenHash)
+
+	persisted, err := os.ReadFile(path)
+	r.NoError(err)
+	r.False(strings.Contains(string(persisted), legacyToken), "legacy plaintext token should be removed after load")
+	r.Contains(string(persisted), `"token_hash"`)
 }
 
 func TestDeleteUserCannotDeleteDefaultAdmin(t *testing.T) {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,8 @@ import (
 )
 
 const clientTokenLifetime = 90 * 24 * time.Hour
+const clientTokenMaxLifetime = 90 * 24 * time.Hour
+const clientTokenNameMaxLength = 80
 
 type Store struct {
 	path string
@@ -44,11 +47,14 @@ type StoredSession struct {
 }
 
 type StoredClientToken struct {
-	Token     string    `json:"token"`
-	Login     string    `json:"login"`
-	Admin     bool      `json:"admin"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
+	PlainToken string    `json:"-"`
+	Token      string    `json:"token,omitempty"`
+	TokenHash  string    `json:"token_hash"`
+	Name       string    `json:"name"`
+	Login      string    `json:"login"`
+	Admin      bool      `json:"admin"`
+	CreatedAt  time.Time `json:"created_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -182,18 +188,38 @@ func (s *Store) DeleteSession(id string) error {
 }
 
 func (s *Store) CreateClientToken(login string, admin bool) (StoredClientToken, error) {
+	return s.CreateClientTokenWithLifetime(login, admin, clientTokenLifetime)
+}
+
+func (s *Store) CreateClientTokenWithLifetime(login string, admin bool, lifetime time.Duration) (StoredClientToken, error) {
+	return s.CreateClientTokenWithNameAndLifetime(login, admin, "rgrok login", lifetime)
+}
+
+func (s *Store) CreateClientTokenWithNameAndLifetime(login string, admin bool, name string, lifetime time.Duration) (StoredClientToken, error) {
 	login = normalizeLogin(login)
+	name, err := normalizeClientTokenName(name)
+	if err != nil {
+		return StoredClientToken{}, err
+	}
+	if lifetime <= 0 {
+		return StoredClientToken{}, errors.New("token lifetime must be positive")
+	}
+	if lifetime > clientTokenMaxLifetime {
+		return StoredClientToken{}, errors.New("token lifetime cannot exceed 90 days")
+	}
 	token, err := randomHex(32)
 	if err != nil {
 		return StoredClientToken{}, err
 	}
 	now := time.Now().UTC()
 	clientToken := StoredClientToken{
-		Token:     token,
-		Login:     login,
-		Admin:     admin,
-		CreatedAt: now,
-		ExpiresAt: now.Add(clientTokenLifetime),
+		PlainToken: token,
+		TokenHash:  clientTokenHash(token),
+		Name:       name,
+		Login:      login,
+		Admin:      admin,
+		CreatedAt:  now,
+		ExpiresAt:  now.Add(lifetime),
 	}
 
 	s.mu.Lock()
@@ -201,23 +227,80 @@ func (s *Store) CreateClientToken(login string, admin bool) (StoredClientToken, 
 	if s.data.ClientTokens == nil {
 		s.data.ClientTokens = make(map[string]StoredClientToken)
 	}
-	s.data.ClientTokens[token] = clientToken
+	storedToken := clientToken
+	storedToken.PlainToken = ""
+	s.data.ClientTokens[clientToken.TokenHash] = storedToken
 	return clientToken, s.saveLocked()
 }
 
-func (s *Store) ClientToken(token string) (StoredClientToken, bool) {
+func (s *Store) ListClientTokensForUser(login string) []StoredClientToken {
+	login = normalizeLogin(login)
+	now := time.Now().UTC()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	clientToken, ok := s.data.ClientTokens[token]
+	tokens := make([]StoredClientToken, 0)
+	changed := false
+	for tokenHash, ct := range s.data.ClientTokens {
+		if now.After(ct.ExpiresAt) {
+			delete(s.data.ClientTokens, tokenHash)
+			changed = true
+			continue
+		}
+		if normalizeLogin(ct.Login) != login {
+			continue
+		}
+		ct.PlainToken = ""
+		ct.Token = ""
+		tokens = append(tokens, ct)
+	}
+	if changed {
+		_ = s.saveLocked()
+	}
+	sort.Slice(tokens, func(i, j int) bool {
+		if tokens[i].CreatedAt.Equal(tokens[j].CreatedAt) {
+			return tokens[i].Name < tokens[j].Name
+		}
+		return tokens[i].CreatedAt.After(tokens[j].CreatedAt)
+	})
+	return tokens
+}
+
+func (s *Store) ClientToken(token string) (StoredClientToken, bool) {
+	if token == "" {
+		return StoredClientToken{}, false
+	}
+	tokenHash := clientTokenHash(token)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clientToken, ok := s.data.ClientTokens[tokenHash]
 	if !ok {
 		return StoredClientToken{}, false
 	}
 	if time.Now().UTC().After(clientToken.ExpiresAt) {
-		delete(s.data.ClientTokens, token)
+		delete(s.data.ClientTokens, tokenHash)
 		_ = s.saveLocked()
 		return StoredClientToken{}, false
 	}
 	return clientToken, true
+}
+
+func (s *Store) RevokeClientTokenForUser(login string, tokenHash string) (bool, error) {
+	login = normalizeLogin(login)
+	tokenHash = strings.TrimSpace(tokenHash)
+	if tokenHash == "" {
+		return false, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ct, ok := s.data.ClientTokens[tokenHash]
+	if !ok || normalizeLogin(ct.Login) != login {
+		return false, nil
+	}
+	delete(s.data.ClientTokens, tokenHash)
+	return true, s.saveLocked()
 }
 
 func (s *Store) RevokeClientTokensForUser(login string) error {
@@ -262,6 +345,9 @@ func (s *Store) load() error {
 	if s.data.ClientTokens == nil {
 		s.data.ClientTokens = make(map[string]StoredClientToken)
 	}
+	if s.migrateClientTokensLocked() {
+		return s.saveLocked()
+	}
 	return nil
 }
 
@@ -295,4 +381,48 @@ func randomHex(bytes int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func clientTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Store) migrateClientTokensLocked() bool {
+	migrated := false
+	tokens := make(map[string]StoredClientToken, len(s.data.ClientTokens))
+	for key, ct := range s.data.ClientTokens {
+		originalToken := ct.Token
+		if ct.TokenHash == "" && ct.Token != "" {
+			ct.TokenHash = clientTokenHash(ct.Token)
+		}
+		ct.Token = ""
+		if ct.TokenHash == "" {
+			migrated = true
+			continue
+		}
+		if strings.TrimSpace(ct.Name) == "" {
+			ct.Name = "Legacy token"
+			migrated = true
+		}
+		tokens[ct.TokenHash] = ct
+		if key != ct.TokenHash || originalToken != "" {
+			migrated = true
+		}
+	}
+	if migrated {
+		s.data.ClientTokens = tokens
+	}
+	return migrated
+}
+
+func normalizeClientTokenName(name string) (string, error) {
+	name = strings.Join(strings.Fields(name), " ")
+	if name == "" {
+		return "", errors.New("token name is required")
+	}
+	if len(name) > clientTokenNameMaxLength {
+		return "", errors.New("token name must be 80 characters or less")
+	}
+	return name, nil
 }

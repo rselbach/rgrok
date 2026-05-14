@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -274,6 +275,167 @@ func TestDashboardMutationsRequirePostAndCSRF(t *testing.T) {
 	r.True(user.Admin)
 }
 
+func TestDashboardCreateAPIToken(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store:   store,
+		tunnels: make(map[string]*tunnel),
+	}
+
+	r.NoError(store.UpsertUser("abed", false))
+	session, err := store.CreateSession("abed", false)
+	r.NoError(err)
+
+	body := "csrf_token=" + session.CSRFToken + "&name=workstation&expires_in_days=30"
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/api-tokens/create", strings.NewReader(body))
+	req.Host = "localhost:7000"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	rec := httptest.NewRecorder()
+
+	s.requirePost(s.handleCreateAPIToken).ServeHTTP(rec, req)
+	r.Equal(http.StatusOK, rec.Code)
+	r.Contains(rec.Body.String(), "RGROK_API_TOKEN")
+	tokenMatch := regexp.MustCompile(`id="created-api-token" type="text" readonly value="([^"]+)"`).FindStringSubmatch(rec.Body.String())
+	r.Len(tokenMatch, 2)
+	plainToken := tokenMatch[1]
+	r.NotEmpty(plainToken)
+
+	store.mu.Lock()
+	r.Len(store.data.ClientTokens, 1)
+	var created StoredClientToken
+	for _, token := range store.data.ClientTokens {
+		created = token
+	}
+	store.mu.Unlock()
+
+	r.Equal("abed", created.Login)
+	r.Equal("workstation", created.Name)
+	r.Empty(created.PlainToken)
+	r.NotEmpty(created.TokenHash)
+	r.Empty(created.Token)
+	r.WithinDuration(time.Now().UTC().Add(30*24*time.Hour), created.ExpiresAt, time.Minute)
+
+	req = httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	req.Host = "localhost:7000"
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	rec = httptest.NewRecorder()
+	s.handleDashboard(rec, req)
+	r.Equal(http.StatusOK, rec.Code)
+	r.Contains(rec.Body.String(), "workstation")
+	r.NotContains(rec.Body.String(), plainToken)
+}
+
+func TestDashboardCreateAPITokenRejectsLongExpiry(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store: store,
+	}
+
+	r.NoError(store.UpsertUser("abed", false))
+	session, err := store.CreateSession("abed", false)
+	r.NoError(err)
+
+	body := "csrf_token=" + session.CSRFToken + "&name=workstation&expires_in_days=365"
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/api-tokens/create", strings.NewReader(body))
+	req.Host = "localhost:7000"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	rec := httptest.NewRecorder()
+
+	s.requirePost(s.handleCreateAPIToken).ServeHTTP(rec, req)
+	r.Equal(http.StatusBadRequest, rec.Code)
+
+	store.mu.Lock()
+	r.Empty(store.data.ClientTokens)
+	store.mu.Unlock()
+}
+
+func TestDashboardDeleteAPIToken(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store: store,
+	}
+
+	r.NoError(store.UpsertUser("abed", false))
+	session, err := store.CreateSession("abed", false)
+	r.NoError(err)
+	token, err := store.CreateClientTokenWithNameAndLifetime("abed", false, "workstation", 30*24*time.Hour)
+	r.NoError(err)
+
+	body := "csrf_token=" + session.CSRFToken + "&token_hash=" + token.TokenHash
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/api-tokens/delete", strings.NewReader(body))
+	req.Host = "localhost:7000"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	rec := httptest.NewRecorder()
+
+	s.requirePost(s.handleDeleteAPIToken).ServeHTTP(rec, req)
+	r.Equal(http.StatusFound, rec.Code)
+	r.Equal("/dashboard#api-tokens", rec.Header().Get("Location"))
+
+	_, ok := store.ClientToken(token.PlainToken)
+	r.False(ok)
+}
+
+func TestDashboardDeleteAPITokenRejectsOtherUserToken(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store: store,
+	}
+
+	r.NoError(store.UpsertUser("abed", false))
+	session, err := store.CreateSession("abed", false)
+	r.NoError(err)
+	token, err := store.CreateClientTokenWithNameAndLifetime("troy", false, "deploy", 30*24*time.Hour)
+	r.NoError(err)
+
+	body := "csrf_token=" + session.CSRFToken + "&token_hash=" + token.TokenHash
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/api-tokens/delete", strings.NewReader(body))
+	req.Host = "localhost:7000"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	rec := httptest.NewRecorder()
+
+	s.requirePost(s.handleDeleteAPIToken).ServeHTTP(rec, req)
+	r.Equal(http.StatusNotFound, rec.Code)
+
+	_, ok := store.ClientToken(token.PlainToken)
+	r.True(ok)
+}
+
 func TestSchemeFromRequest(t *testing.T) {
 	tests := map[string]struct {
 		behindProxy bool
@@ -406,18 +568,18 @@ func TestClientTokenExpiry(t *testing.T) {
 	r.False(token.ExpiresAt.IsZero())
 
 	// Fresh token is valid.
-	ct, ok := store.ClientToken(token.Token)
+	ct, ok := store.ClientToken(token.PlainToken)
 	r.True(ok)
 	r.Equal("abed", ct.Login)
 
 	// Manually expire the token in the store.
 	store.mu.Lock()
-	expired := store.data.ClientTokens[token.Token]
+	expired := store.data.ClientTokens[token.TokenHash]
 	expired.ExpiresAt = time.Now().UTC().Add(-time.Hour)
-	store.data.ClientTokens[token.Token] = expired
+	store.data.ClientTokens[token.TokenHash] = expired
 	store.mu.Unlock()
 
-	_, ok = store.ClientToken(token.Token)
+	_, ok = store.ClientToken(token.PlainToken)
 	r.False(ok, "expired token should be rejected")
 }
 
@@ -456,13 +618,13 @@ func TestRevokeSessions(t *testing.T) {
 	r.Equal(http.StatusFound, rec.Code)
 
 	// abed's tokens should be gone.
-	_, ok := store.ClientToken(token1.Token)
+	_, ok := store.ClientToken(token1.PlainToken)
 	r.False(ok)
-	_, ok = store.ClientToken(token2.Token)
+	_, ok = store.ClientToken(token2.PlainToken)
 	r.False(ok)
 
 	// troy's token should remain.
-	_, ok = store.ClientToken(token3.Token)
+	_, ok = store.ClientToken(token3.PlainToken)
 	r.True(ok)
 
 	// Session should be deleted too.
@@ -643,7 +805,7 @@ func TestEndToEndTunnel(t *testing.T) {
 		LocalPort   int    `json:"local_port"`
 	}{
 		Type:      "register_tunnel",
-		AuthToken: ct.Token,
+		AuthToken: ct.PlainToken,
 		LocalPort: 1234,
 	})
 	r.NoError(err)
