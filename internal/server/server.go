@@ -30,32 +30,34 @@ import (
 )
 
 const (
-	maxBodyBytesDefault      = protocol.MaxBodyBytesDefault
-	pingInterval             = 25 * time.Second
-	writeTimeout             = 10 * time.Second
-	closeWriteTimeout        = 2 * time.Second
-	tunnelResponseTimeout    = 2 * time.Minute
-	maxRandomIDAttempts      = 10
-	readLimitOverhead        = 1 << 20
-	sendChannelSize          = 64
-	maxDeviceLogins          = 100
-	deviceLoginRateLimit     = 10 * time.Second
-	deviceLoginSweepInterval = 1 * time.Minute
+	maxBodyBytesDefault         = protocol.MaxBodyBytesDefault
+	pingInterval                = 25 * time.Second
+	writeTimeout                = 10 * time.Second
+	closeWriteTimeout           = 2 * time.Second
+	tunnelResponseTimeout       = 2 * time.Minute
+	maxRandomIDAttempts         = 10
+	readLimitOverhead           = 1 << 20
+	sendChannelSize             = 64
+	maxRequestsPerTunnelDefault = 64
+	maxDeviceLogins             = 100
+	deviceLoginRateLimit        = 10 * time.Second
+	deviceLoginSweepInterval    = 1 * time.Minute
 )
 
 type Config struct {
-	Addr               string
-	Domain             string
-	PublicScheme       string
-	ConnectPath        string
-	DataPath           string
-	GitHubClientID     string
-	GitHubClientSecret string
-	MaxBodyBytes       int64
-	Logger             *slog.Logger
-	ShutdownTimeout    time.Duration
-	MaxTunnelsPerUser  int
-	BehindProxy        bool
+	Addr                 string
+	Domain               string
+	PublicScheme         string
+	ConnectPath          string
+	DataPath             string
+	GitHubClientID       string
+	GitHubClientSecret   string
+	MaxBodyBytes         int64
+	Logger               *slog.Logger
+	ShutdownTimeout      time.Duration
+	MaxTunnelsPerUser    int
+	MaxRequestsPerTunnel int
+	BehindProxy          bool
 }
 
 type Server struct {
@@ -84,13 +86,14 @@ type deviceLogin struct {
 }
 
 type tunnel struct {
-	id        string
-	host      string
-	publicURL string
-	owner     string
-	conn      *websocket.Conn
-	send      chan protocol.Message
-	done      chan struct{}
+	id           string
+	host         string
+	publicURL    string
+	owner        string
+	conn         *websocket.Conn
+	send         chan protocol.Message
+	done         chan struct{}
+	requestSlots chan struct{}
 
 	pendingMu sync.Mutex
 	pending   map[uint64]chan protocol.Message
@@ -132,6 +135,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.MaxTunnelsPerUser <= 0 {
 		cfg.MaxTunnelsPerUser = 5
+	}
+	if cfg.MaxRequestsPerTunnel <= 0 {
+		cfg.MaxRequestsPerTunnel = maxRequestsPerTunnelDefault
 	}
 
 	store, err := OpenStore(cfg.DataPath)
@@ -352,14 +358,15 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 	host := id + "." + s.cfg.Domain
 	t := &tunnel{
-		id:        id,
-		host:      host,
-		publicURL: s.cfg.PublicScheme + "://" + host,
-		owner:     clientToken.Login,
-		conn:      conn,
-		send:      make(chan protocol.Message, sendChannelSize),
-		done:      make(chan struct{}),
-		pending:   make(map[uint64]chan protocol.Message),
+		id:           id,
+		host:         host,
+		publicURL:    s.cfg.PublicScheme + "://" + host,
+		owner:        clientToken.Login,
+		conn:         conn,
+		send:         make(chan protocol.Message, sendChannelSize),
+		done:         make(chan struct{}),
+		requestSlots: make(chan struct{}, s.maxRequestsPerTunnel()),
+		pending:      make(map[uint64]chan protocol.Message),
 	}
 
 	if err := s.registerTunnel(t); err != nil {
@@ -416,6 +423,11 @@ func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
 		s.writeIndexOrNotFound(w, r)
 		return
 	}
+	if !t.acquireRequestSlot() {
+		http.Error(w, "tunnel busy", http.StatusServiceUnavailable)
+		return
+	}
+	defer t.releaseRequestSlot()
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes))
 	if err != nil {
@@ -548,6 +560,13 @@ func (s *Server) chooseID(requested string) (string, error) {
 	return "", errors.New("could not allocate tunnel id")
 }
 
+func (s *Server) maxRequestsPerTunnel() int {
+	if s.cfg.MaxRequestsPerTunnel > 0 {
+		return s.cfg.MaxRequestsPerTunnel
+	}
+	return maxRequestsPerTunnelDefault
+}
+
 func (s *Server) registerTunnel(t *tunnel) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -560,6 +579,10 @@ func (s *Server) registerTunnel(t *tunnel) error {
 	}
 	if count >= s.cfg.MaxTunnelsPerUser {
 		return fmt.Errorf("maximum number of tunnels (%d) reached for user %s", s.cfg.MaxTunnelsPerUser, t.owner)
+	}
+
+	if t.requestSlots == nil {
+		t.requestSlots = make(chan struct{}, s.maxRequestsPerTunnel())
 	}
 
 	key := strings.ToLower(t.host)
@@ -602,6 +625,22 @@ func (t *tunnel) writeLoop() {
 			_ = t.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bye"))
 			return
 		}
+	}
+}
+
+func (t *tunnel) acquireRequestSlot() bool {
+	select {
+	case t.requestSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *tunnel) releaseRequestSlot() {
+	select {
+	case <-t.requestSlots:
+	default:
 	}
 }
 

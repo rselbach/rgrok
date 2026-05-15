@@ -174,6 +174,49 @@ func TestMaxTunnelsPerUser(t *testing.T) {
 	r.NoError(s.registerTunnel(&tunnel{id: "t4", host: "t4.localhost:7000", owner: "troy"}))
 }
 
+func TestTunnelRequestSlots(t *testing.T) {
+	r := require.New(t)
+	tun := &tunnel{requestSlots: make(chan struct{}, 1)}
+
+	r.True(tun.acquireRequestSlot())
+	r.False(tun.acquireRequestSlot())
+	tun.releaseRequestSlot()
+	r.True(tun.acquireRequestSlot())
+}
+
+func TestHandlePublicRejectsWhenTunnelBusy(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	tun := &tunnel{
+		id:           "demo",
+		host:         "demo.localhost:7000",
+		requestSlots: make(chan struct{}, 1),
+	}
+	r.True(tun.acquireRequestSlot())
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store: store,
+		tunnels: map[string]*tunnel{
+			"demo.localhost:7000": tun,
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://demo.localhost:7000/", nil)
+	req.Host = "demo.localhost:7000"
+	rec := httptest.NewRecorder()
+
+	s.handlePublic(rec, req)
+	r.Equal(http.StatusServiceUnavailable, rec.Code)
+	r.Contains(rec.Body.String(), "tunnel busy")
+}
+
 func TestFailPendingDoesNotBlockWhenResponseQueued(t *testing.T) {
 	r := require.New(t)
 

@@ -62,6 +62,7 @@ func runServer(args []string, log *slog.Logger) error {
 	githubClientSecret := fs.String("github-client-secret", os.Getenv("RGROK_GITHUB_CLIENT_SECRET"), "GitHub OAuth app client secret")
 	maxBody := fs.Int64("max-body", protocol.MaxBodyBytesDefault, "maximum request or response body bytes")
 	maxTunnelsPerUser := fs.Int("max-tunnels-per-user", 0, "maximum tunnels per user (0 = default 5)")
+	maxRequestsPerTunnel := fs.Int("max-requests-per-tunnel", 0, "maximum concurrent public requests per tunnel (0 = default 64)")
 	showLogs := fs.Bool("logs", false, "show server logs")
 	logFormat := fs.String("log-format", "text", "log format: text or json")
 	if err := fs.Parse(args); err != nil {
@@ -71,17 +72,18 @@ func runServer(args []string, log *slog.Logger) error {
 	log = newLogger(*showLogs, *logFormat)
 
 	s, err := server.New(server.Config{
-		Addr:               *addr,
-		Domain:             *domain,
-		PublicScheme:       *publicScheme,
-		BehindProxy:        *behindProxy,
-		ConnectPath:        *connectPath,
-		DataPath:           *dataPath,
-		GitHubClientID:     *githubClientID,
-		GitHubClientSecret: *githubClientSecret,
-		MaxBodyBytes:       *maxBody,
-		MaxTunnelsPerUser:  *maxTunnelsPerUser,
-		Logger:             log,
+		Addr:                 *addr,
+		Domain:               *domain,
+		PublicScheme:         *publicScheme,
+		BehindProxy:          *behindProxy,
+		ConnectPath:          *connectPath,
+		DataPath:             *dataPath,
+		GitHubClientID:       *githubClientID,
+		GitHubClientSecret:   *githubClientSecret,
+		MaxBodyBytes:         *maxBody,
+		MaxTunnelsPerUser:    *maxTunnelsPerUser,
+		MaxRequestsPerTunnel: *maxRequestsPerTunnel,
+		Logger:               log,
 	})
 	if err != nil {
 		return err
