@@ -58,12 +58,14 @@ type Config struct {
 	MaxTunnelsPerUser    int
 	MaxRequestsPerTunnel int
 	BehindProxy          bool
+	TrustedProxyCIDRs    []string
 }
 
 type Server struct {
-	cfg    Config
-	store  *Store
-	github auth.GitHubClient
+	cfg              Config
+	store            *Store
+	github           auth.GitHubClient
+	trustedProxyNets []*net.IPNet
 
 	mu              sync.RWMutex
 	tunnels         map[string]*tunnel
@@ -126,6 +128,10 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	trustedProxyNets, err := parseTrustedProxyCIDRs(cfg.TrustedProxyCIDRs)
+	if err != nil {
+		return nil, err
+	}
 
 	cfg.Domain = strings.TrimPrefix(strings.TrimPrefix(cfg.Domain, "https://"), "http://")
 	cfg.Domain = strings.TrimRight(cfg.Domain, "/")
@@ -146,12 +152,13 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	return &Server{
-		cfg:             cfg,
-		store:           store,
-		github:          auth.GitHubClient{ClientID: cfg.GitHubClientID, ClientSecret: cfg.GitHubClientSecret},
-		tunnels:         make(map[string]*tunnel),
-		deviceLogins:    make(map[string]*deviceLogin),
-		deviceLoginLast: make(map[string]time.Time),
+		cfg:              cfg,
+		store:            store,
+		github:           auth.GitHubClient{ClientID: cfg.GitHubClientID, ClientSecret: cfg.GitHubClientSecret},
+		trustedProxyNets: trustedProxyNets,
+		tunnels:          make(map[string]*tunnel),
+		deviceLogins:     make(map[string]*deviceLogin),
+		deviceLoginLast:  make(map[string]time.Time),
 	}, nil
 }
 
@@ -758,12 +765,12 @@ func writeClose(conn *websocket.Conn, code int, text string) {
 }
 
 func (s *Server) clientIP(r *http.Request) string {
-	if s.cfg.BehindProxy {
+	if s.requestFromTrustedProxy(r) {
 		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
 			if i := strings.Index(fwd, ","); i != -1 {
 				return strings.TrimSpace(fwd[:i])
 			}
-			return fwd
+			return strings.TrimSpace(fwd)
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -778,7 +785,7 @@ func (s *Server) addForwardedHeaders(h http.Header, r *http.Request) {
 	h.Del("X-Forwarded-Host")
 	h.Del("X-Forwarded-Proto")
 
-	if s.cfg.BehindProxy {
+	if s.requestFromTrustedProxy(r) {
 		if prior := r.Header.Get("X-Forwarded-For"); prior != "" {
 			h.Set("X-Forwarded-For", prior)
 		} else {
@@ -792,7 +799,7 @@ func (s *Server) addForwardedHeaders(h http.Header, r *http.Request) {
 }
 
 func (s *Server) schemeFromRequest(r *http.Request) string {
-	if s.cfg.BehindProxy {
+	if s.requestFromTrustedProxy(r) {
 		if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
 			return proto
 		}
@@ -801,6 +808,47 @@ func (s *Server) schemeFromRequest(r *http.Request) string {
 		return "https"
 	}
 	return "http"
+}
+
+func parseTrustedProxyCIDRs(raw []string) ([]*net.IPNet, error) {
+	if len(raw) == 0 {
+		raw = []string{"127.0.0.0/8", "::1/128"}
+	}
+	nets := make([]*net.IPNet, 0, len(raw))
+	for _, value := range raw {
+		for _, part := range strings.Split(value, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			_, ipNet, err := net.ParseCIDR(part)
+			if err != nil {
+				return nil, fmt.Errorf("invalid trusted proxy CIDR %q: %w", part, err)
+			}
+			nets = append(nets, ipNet)
+		}
+	}
+	return nets, nil
+}
+
+func (s *Server) requestFromTrustedProxy(r *http.Request) bool {
+	if !s.cfg.BehindProxy {
+		return false
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	for _, ipNet := range s.trustedProxyNets {
+		if ipNet.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func sameHost(a, b string) bool {

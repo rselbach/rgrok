@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -517,11 +518,11 @@ func TestSchemeFromRequest(t *testing.T) {
 		fwdProto    string
 		want        string
 	}{
-		"direct http":                         {behindProxy: false, tls: false, fwdProto: "", want: "http"},
-		"direct https":                        {behindProxy: false, tls: true, fwdProto: "", want: "https"},
-		"direct ignores forwarded proto":      {behindProxy: false, tls: false, fwdProto: "https", want: "http"},
-		"behind proxy trusts forwarded proto": {behindProxy: true, tls: false, fwdProto: "https", want: "https"},
-		"behind proxy falls back to remote":   {behindProxy: true, tls: true, fwdProto: "", want: "https"},
+		"direct http":                    {behindProxy: false, tls: false, fwdProto: "", want: "http"},
+		"direct https":                   {behindProxy: false, tls: true, fwdProto: "", want: "https"},
+		"direct ignores forwarded proto": {behindProxy: false, tls: false, fwdProto: "https", want: "http"},
+		"behind proxy trusts forwarded proto from loopback": {behindProxy: true, tls: false, fwdProto: "https", want: "https"},
+		"behind proxy falls back to remote":                 {behindProxy: true, tls: true, fwdProto: "", want: "https"},
 	}
 
 	for name, tc := range tests {
@@ -530,6 +531,12 @@ func TestSchemeFromRequest(t *testing.T) {
 			s := &Server{cfg: Config{BehindProxy: tc.behindProxy}}
 
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			if tc.behindProxy {
+				req.RemoteAddr = "127.0.0.1:12345"
+				nets, err := parseTrustedProxyCIDRs(nil)
+				r.NoError(err)
+				s.trustedProxyNets = nets
+			}
 			if tc.fwdProto != "" {
 				req.Header.Set("X-Forwarded-Proto", tc.fwdProto)
 			}
@@ -566,8 +573,12 @@ func TestAddForwardedHeadersTrustsProxy(t *testing.T) {
 	r := require.New(t)
 
 	s := &Server{cfg: Config{BehindProxy: true}}
+	var err error
+	s.trustedProxyNets, err = parseTrustedProxyCIDRs(nil)
+	r.NoError(err)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
 	req.Header.Set("X-Forwarded-For", "203.0.113.1")
 	req.Header.Set("X-Forwarded-Proto", "https")
 
@@ -576,6 +587,24 @@ func TestAddForwardedHeadersTrustsProxy(t *testing.T) {
 
 	r.Equal("203.0.113.1", h.Get("X-Forwarded-For"))
 	r.Equal("https", h.Get("X-Forwarded-Proto"))
+}
+
+func TestAddForwardedHeadersRejectsUntrustedProxyHeaders(t *testing.T) {
+	r := require.New(t)
+
+	s := &Server{cfg: Config{BehindProxy: true}}
+	s.trustedProxyNets = []*net.IPNet{}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "198.51.100.10:12345"
+	req.Header.Set("X-Forwarded-For", "203.0.113.1")
+	req.Header.Set("X-Forwarded-Proto", "https")
+
+	h := make(http.Header)
+	s.addForwardedHeaders(h, req)
+
+	r.Equal("198.51.100.10", h.Get("X-Forwarded-For"))
+	r.Equal("http", h.Get("X-Forwarded-Proto"))
 }
 
 func TestSecurityHeadersWithHSTS(t *testing.T) {
