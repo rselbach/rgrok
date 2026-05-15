@@ -159,6 +159,7 @@ func runConnect(args []string, log *slog.Logger) error {
 	localHost := fs.String("local-host", "127.0.0.1", "local host to forward to")
 	preserveHost := fs.Bool("preserve-host", false, "send the public Host header to the local app")
 	maxBody := fs.Int64("max-body", protocol.MaxBodyBytesDefault, "maximum request or response body bytes")
+	maxConcurrentRequests := fs.Int("max-concurrent-requests", 32, "maximum concurrent requests forwarded to the local app")
 	showLogs := fs.Bool("logs", false, "show client logs")
 
 	var portArg string
@@ -214,14 +215,15 @@ func runConnect(args []string, log *slog.Logger) error {
 	}
 
 	c := client.New(client.Config{
-		ServerURL:    srvURL,
-		RequestedID:  *name,
-		AuthToken:    authToken,
-		LocalHost:    *localHost,
-		LocalPort:    localPort,
-		PreserveHost: *preserveHost,
-		MaxBodyBytes: *maxBody,
-		Logger:       log,
+		ServerURL:             srvURL,
+		RequestedID:           *name,
+		AuthToken:             authToken,
+		LocalHost:             *localHost,
+		LocalPort:             localPort,
+		PreserveHost:          *preserveHost,
+		MaxBodyBytes:          *maxBody,
+		MaxConcurrentRequests: *maxConcurrentRequests,
+		Logger:                log,
 	})
 	return c.Run(context.Background())
 }
@@ -290,9 +292,10 @@ Flags:
   -name string       requested tunnel subdomain
   -token string      API token override (or set RGROK_API_TOKEN)
   -local-host string local host to forward to (default 127.0.0.1)
-  -preserve-host     send public Host header to local app
-  -logs              show client logs
-  -max-body int      max body bytes (default 33554432)`)
+  -preserve-host            send public Host header to local app
+  -logs                     show client logs
+  -max-body int             max body bytes (default 33554432)
+  -max-concurrent-requests  max concurrent local requests (default 32)`)
 }
 
 func usage() {

@@ -60,6 +60,35 @@ func TestHandleRequestDoesNotBlockWhenDoneClosed(t *testing.T) {
 	c.handleRequest(msg, send, done)
 }
 
+func TestNewSetsDefaultMaxConcurrentRequests(t *testing.T) {
+	r := require.New(t)
+	c := New(Config{})
+	r.Equal(maxConcurrentRequestsDefault, c.cfg.MaxConcurrentRequests)
+}
+
+func TestSendBusyResponse(t *testing.T) {
+	r := require.New(t)
+	c := New(Config{})
+	send := make(chan protocol.Message, 1)
+	done := make(chan struct{})
+
+	c.sendBusyResponse(protocol.Message{StreamID: 7}, send, done)
+
+	resp := <-send
+	r.Equal(protocol.TypeResponse, resp.Type)
+	r.Equal(uint64(7), resp.StreamID)
+	r.Equal("local application is busy", resp.Error)
+}
+
+func TestSendBusyResponseDoesNotBlockWhenDoneClosed(t *testing.T) {
+	c := New(Config{})
+	send := make(chan protocol.Message)
+	done := make(chan struct{})
+	close(done)
+
+	c.sendBusyResponse(protocol.Message{StreamID: 7}, send, done)
+}
+
 func TestNextBackoff(t *testing.T) {
 	tests := map[string]struct {
 		current time.Duration

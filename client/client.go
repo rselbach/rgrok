@@ -16,16 +16,17 @@ import (
 )
 
 type Config struct {
-	ServerURL        string
-	ServerBaseURL    string
-	Token            string
-	Name             string
-	LocalHost        string
-	LocalPort        int
-	PreserveHost     bool
-	MaxBodyBytes     int64
-	Logger           *slog.Logger
-	ReconnectTimeout time.Duration
+	ServerURL             string
+	ServerBaseURL         string
+	Token                 string
+	Name                  string
+	LocalHost             string
+	LocalPort             int
+	PreserveHost          bool
+	MaxBodyBytes          int64
+	MaxConcurrentRequests int
+	Logger                *slog.Logger
+	ReconnectTimeout      time.Duration
 }
 
 type Tunnel struct {
@@ -68,16 +69,17 @@ func Start(ctx context.Context, cfg Config) (*Tunnel, error) {
 	var registeredOnce sync.Once
 
 	c := internalclient.New(internalclient.Config{
-		ServerURL:        serverURL,
-		RequestedID:      cfg.Name,
-		AuthToken:        cfg.Token,
-		LocalHost:        cfg.LocalHost,
-		LocalPort:        cfg.LocalPort,
-		PreserveHost:     cfg.PreserveHost,
-		MaxBodyBytes:     cfg.MaxBodyBytes,
-		Logger:           logger,
-		ReconnectTimeout: cfg.ReconnectTimeout,
-		Output:           io.Discard,
+		ServerURL:             serverURL,
+		RequestedID:           cfg.Name,
+		AuthToken:             cfg.Token,
+		LocalHost:             cfg.LocalHost,
+		LocalPort:             cfg.LocalPort,
+		PreserveHost:          cfg.PreserveHost,
+		MaxBodyBytes:          cfg.MaxBodyBytes,
+		MaxConcurrentRequests: cfg.MaxConcurrentRequests,
+		Logger:                logger,
+		ReconnectTimeout:      cfg.ReconnectTimeout,
+		Output:                io.Discard,
 		OnRegistered: func(reg internalclient.Registration) {
 			registeredOnce.Do(func() {
 				registered <- reg

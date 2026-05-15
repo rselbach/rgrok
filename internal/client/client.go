@@ -20,25 +20,27 @@ import (
 )
 
 const (
-	maxBodyBytesDefault = 32 << 20
-	writeTimeout        = 10 * time.Second
-	httpClientTimeout   = 2 * time.Minute
-	readLimitOverhead   = 1 << 20
-	sendChannelSize     = 64
+	maxBodyBytesDefault          = 32 << 20
+	writeTimeout                 = 10 * time.Second
+	httpClientTimeout            = 2 * time.Minute
+	readLimitOverhead            = 1 << 20
+	sendChannelSize              = 64
+	maxConcurrentRequestsDefault = 32
 )
 
 type Config struct {
-	ServerURL        string
-	RequestedID      string
-	AuthToken        string
-	LocalHost        string
-	LocalPort        int
-	PreserveHost     bool
-	MaxBodyBytes     int64
-	Logger           *slog.Logger
-	ReconnectTimeout time.Duration
-	Output           io.Writer
-	OnRegistered     func(Registration)
+	ServerURL             string
+	RequestedID           string
+	AuthToken             string
+	LocalHost             string
+	LocalPort             int
+	PreserveHost          bool
+	MaxBodyBytes          int64
+	Logger                *slog.Logger
+	ReconnectTimeout      time.Duration
+	MaxConcurrentRequests int
+	Output                io.Writer
+	OnRegistered          func(Registration)
 }
 
 type Registration struct {
@@ -69,6 +71,9 @@ func New(cfg Config) *Client {
 	}
 	if cfg.ReconnectTimeout <= 0 {
 		cfg.ReconnectTimeout = 30 * time.Second
+	}
+	if cfg.MaxConcurrentRequests <= 0 {
+		cfg.MaxConcurrentRequests = maxConcurrentRequestsDefault
 	}
 
 	return &Client{
@@ -197,6 +202,7 @@ func (c *Client) runOnce(ctx context.Context) error {
 
 	send := make(chan protocol.Message, sendChannelSize)
 	done := make(chan struct{})
+	requestSlots := make(chan struct{}, c.cfg.MaxConcurrentRequests)
 	writerErr := make(chan error, 1)
 	go writeLoop(conn, send, done, writerErr)
 
@@ -224,7 +230,15 @@ func (c *Client) runOnce(ctx context.Context) error {
 
 		switch msg.Type {
 		case protocol.TypeRequest:
-			go c.handleRequest(msg, send, done)
+			select {
+			case requestSlots <- struct{}{}:
+				go func() {
+					defer func() { <-requestSlots }()
+					c.handleRequest(msg, send, done)
+				}()
+			default:
+				c.sendBusyResponse(msg, send, done)
+			}
 		case protocol.TypePing:
 			select {
 			case send <- protocol.Message{Type: protocol.TypePong}:
@@ -249,6 +263,18 @@ func writeLoop(conn *websocket.Conn, send <-chan protocol.Message, done <-chan s
 		case <-done:
 			return
 		}
+	}
+}
+
+func (c *Client) sendBusyResponse(msg protocol.Message, send chan<- protocol.Message, done <-chan struct{}) {
+	resp := protocol.Message{
+		Type:     protocol.TypeResponse,
+		StreamID: msg.StreamID,
+		Error:    "local application is busy",
+	}
+	select {
+	case send <- resp:
+	case <-done:
 	}
 }
 
