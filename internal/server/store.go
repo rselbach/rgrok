@@ -172,7 +172,7 @@ func (s *Store) Session(id string) (StoredSession, bool) {
 	if !ok {
 		return StoredSession{}, false
 	}
-	if time.Now().UTC().After(session.ExpiresAt) {
+	if session.CSRFToken == "" || time.Now().UTC().After(session.ExpiresAt) {
 		delete(s.data.Sessions, id)
 		_ = s.saveLocked()
 		return StoredSession{}, false
@@ -345,7 +345,11 @@ func (s *Store) load() error {
 	if s.data.ClientTokens == nil {
 		s.data.ClientTokens = make(map[string]StoredClientToken)
 	}
-	if s.migrateClientTokensLocked() {
+	changed := s.migrateClientTokensLocked()
+	if s.dropSessionsMissingCSRFLocked() {
+		changed = true
+	}
+	if changed {
 		return s.saveLocked()
 	}
 	return nil
@@ -414,6 +418,18 @@ func (s *Store) migrateClientTokensLocked() bool {
 		s.data.ClientTokens = tokens
 	}
 	return migrated
+}
+
+func (s *Store) dropSessionsMissingCSRFLocked() bool {
+	changed := false
+	for id, session := range s.data.Sessions {
+		if session.CSRFToken != "" {
+			continue
+		}
+		delete(s.data.Sessions, id)
+		changed = true
+	}
+	return changed
 }
 
 func normalizeClientTokenName(name string) (string, error) {

@@ -275,6 +275,37 @@ func TestDashboardMutationsRequirePostAndCSRF(t *testing.T) {
 	r.True(user.Admin)
 }
 
+func TestDashboardRejectsSessionMissingCSRFToken(t *testing.T) {
+	r := require.New(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		},
+		store: store,
+	}
+
+	session := StoredSession{
+		ID:        "legacy-session",
+		Login:     "abed",
+		Admin:     true,
+		CreatedAt: time.Now().UTC(),
+		ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}
+	req := httptest.NewRequest(http.MethodPost, "/dashboard/users/add", strings.NewReader("login=troy"))
+	req.Host = "localhost:7000"
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	ok := s.requireCSRF(rec, req, session)
+	r.False(ok)
+	r.Equal(http.StatusForbidden, rec.Code)
+}
+
 func TestDashboardCreateAPIToken(t *testing.T) {
 	r := require.New(t)
 	store, err := OpenStore(t.TempDir() + "/test.json")

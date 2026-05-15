@@ -231,6 +231,48 @@ func TestSessionExpiry(t *testing.T) {
 	r.False(ok, "expired session should be rejected")
 }
 
+func TestOpenStoreDropsSessionsMissingCSRFToken(t *testing.T) {
+	r := require.New(t)
+	path := t.TempDir() + "/test.json"
+	now := time.Now().UTC()
+	raw := fmt.Sprintf(`{
+		"users": {},
+		"sessions": {
+			"legacy": {
+				"id": "legacy",
+				"login": "troy",
+				"admin": false,
+				"csrf_token": "",
+				"created_at": %q,
+				"expires_at": %q
+			},
+			"current": {
+				"id": "current",
+				"login": "abed",
+				"admin": false,
+				"csrf_token": "valid-csrf-token",
+				"created_at": %q,
+				"expires_at": %q
+			}
+		},
+		"client_tokens": {}
+	}`, now.Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339), now.Format(time.RFC3339), now.Add(time.Hour).Format(time.RFC3339))
+	r.NoError(os.WriteFile(path, []byte(raw), 0o600))
+
+	store, err := OpenStore(path)
+	r.NoError(err)
+
+	_, ok := store.Session("legacy")
+	r.False(ok)
+	_, ok = store.Session("current")
+	r.True(ok)
+
+	persisted, err := os.ReadFile(path)
+	r.NoError(err)
+	r.NotContains(string(persisted), `"legacy"`)
+	r.Contains(string(persisted), `"current"`)
+}
+
 func TestDeleteSession(t *testing.T) {
 	r := require.New(t)
 	store, err := OpenStore(t.TempDir() + "/test.json")

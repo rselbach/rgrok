@@ -311,7 +311,7 @@ func (s *Server) requireCSRF(w http.ResponseWriter, r *http.Request, session Sto
 		http.Error(w, "invalid form", http.StatusBadRequest)
 		return false
 	}
-	if r.PostForm.Get("csrf_token") != session.CSRFToken {
+	if session.CSRFToken == "" || r.PostForm.Get("csrf_token") != session.CSRFToken {
 		http.Error(w, "invalid csrf token", http.StatusForbidden)
 		return false
 	}
