@@ -33,6 +33,8 @@ import (
 const (
 	maxBodyBytesDefault         = protocol.MaxBodyBytesDefault
 	pingInterval                = 25 * time.Second
+	registrationTimeout         = 30 * time.Second
+	tunnelReadTimeout           = 3 * pingInterval
 	writeTimeout                = 10 * time.Second
 	closeWriteTimeout           = 2 * time.Second
 	tunnelResponseTimeout       = 2 * time.Minute
@@ -354,6 +356,10 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	conn.SetReadLimit(s.cfg.MaxBodyBytes + readLimitOverhead)
 
+	// Bound the whole registration handshake, including the application
+	// challenge exchange, so unauthenticated connections cannot idle.
+	_ = conn.SetReadDeadline(time.Now().Add(registrationTimeout))
+
 	var reg protocol.Message
 	if err := conn.ReadJSON(&reg); err != nil {
 		s.cfg.Logger.Warn("registration read failed", "err", err)
@@ -431,7 +437,11 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		PublicURL: t.publicURL,
 	}
 
+	// The client answers every ping, so a healthy tunnel delivers a message
+	// at least once per ping interval; refreshing the read deadline on each
+	// message tears down dead connections instead of holding their names.
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(tunnelReadTimeout))
 		var msg protocol.Message
 		if err := conn.ReadJSON(&msg); err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
@@ -580,6 +590,7 @@ func (s *Server) authenticateTunnelRegistration(conn *websocket.Conn, reg protoc
 	if err != nil {
 		return "", nil, errors.New("could not create application challenge")
 	}
+	_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 	if err := conn.WriteJSON(protocol.Message{
 		Type:      protocol.TypeApplicationChallenge,
 		Challenge: challenge,
