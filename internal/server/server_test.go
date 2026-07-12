@@ -607,6 +607,58 @@ func TestAddForwardedHeadersRejectsUntrustedProxyHeaders(t *testing.T) {
 	r.Equal("http", h.Get("X-Forwarded-Proto"))
 }
 
+func TestClientIPIgnoresSpoofedForwardedPrefix(t *testing.T) {
+	r := require.New(t)
+
+	s := &Server{cfg: Config{BehindProxy: true}}
+	var err error
+	s.trustedProxyNets, err = parseTrustedProxyCIDRs(nil)
+	r.NoError(err)
+
+	tests := map[string]struct {
+		forwarded string
+		want      string
+	}{
+		"spoofed prefix":        {forwarded: "6.6.6.6, 203.0.113.1", want: "203.0.113.1"},
+		"chained trusted proxy": {forwarded: "6.6.6.6, 203.0.113.1, 127.0.0.2", want: "203.0.113.1"},
+		"single entry":          {forwarded: "203.0.113.1", want: "203.0.113.1"},
+		"all trusted":           {forwarded: "127.0.0.2", want: "127.0.0.1"},
+		"unparsable entry":      {forwarded: "not-an-ip", want: "127.0.0.1"},
+		"empty header":          {forwarded: "", want: "127.0.0.1"},
+		"spoofed then garbage":  {forwarded: "6.6.6.6, not-an-ip, 127.0.0.2", want: "127.0.0.1"},
+		"whitespace only entry": {forwarded: " , 203.0.113.1", want: "203.0.113.1"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			r := require.New(t)
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = "127.0.0.1:12345"
+			if tc.forwarded != "" {
+				req.Header.Set("X-Forwarded-For", tc.forwarded)
+			}
+			r.Equal(tc.want, s.clientIP(req))
+		})
+	}
+}
+
+func TestAddForwardedHeadersDropsSpoofedPrefix(t *testing.T) {
+	r := require.New(t)
+
+	s := &Server{cfg: Config{BehindProxy: true}}
+	var err error
+	s.trustedProxyNets, err = parseTrustedProxyCIDRs(nil)
+	r.NoError(err)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "6.6.6.6, 203.0.113.1")
+
+	h := make(http.Header)
+	s.addForwardedHeaders(h, req)
+
+	r.Equal("203.0.113.1", h.Get("X-Forwarded-For"))
+}
+
 func TestSecurityHeadersWithHSTS(t *testing.T) {
 	r := require.New(t)
 

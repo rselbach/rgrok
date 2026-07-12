@@ -893,18 +893,30 @@ func writeClose(conn *websocket.Conn, code int, text string) {
 	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(code, text))
 }
 
+// clientIP returns the address of the closest untrusted hop. Behind a
+// trusted proxy that is the rightmost X-Forwarded-For entry not itself a
+// trusted proxy; leftmost entries are client-supplied and spoofable.
 func (s *Server) clientIP(r *http.Request) string {
-	if s.requestFromTrustedProxy(r) {
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			if i := strings.Index(fwd, ","); i != -1 {
-				return strings.TrimSpace(fwd[:i])
-			}
-			return strings.TrimSpace(fwd)
-		}
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	if !s.requestFromTrustedProxy(r) {
+		return host
+	}
+	entries := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := strings.TrimSpace(entries[i])
+		if entry == "" {
+			continue
+		}
+		ip := net.ParseIP(entry)
+		if ip == nil {
+			return host
+		}
+		if !s.trustedProxyIP(ip) {
+			return entry
+		}
 	}
 	return host
 }
@@ -914,15 +926,7 @@ func (s *Server) addForwardedHeaders(h http.Header, r *http.Request) {
 	h.Del("X-Forwarded-Host")
 	h.Del("X-Forwarded-Proto")
 
-	if s.requestFromTrustedProxy(r) {
-		if prior := r.Header.Get("X-Forwarded-For"); prior != "" {
-			h.Set("X-Forwarded-For", prior)
-		} else {
-			h.Set("X-Forwarded-For", s.clientIP(r))
-		}
-	} else {
-		h.Set("X-Forwarded-For", s.clientIP(r))
-	}
+	h.Set("X-Forwarded-For", s.clientIP(r))
 	h.Set("X-Forwarded-Host", r.Host)
 	h.Set("X-Forwarded-Proto", s.schemeFromRequest(r))
 }
@@ -972,6 +976,10 @@ func (s *Server) requestFromTrustedProxy(r *http.Request) bool {
 	if ip == nil {
 		return false
 	}
+	return s.trustedProxyIP(ip)
+}
+
+func (s *Server) trustedProxyIP(ip net.IP) bool {
 	for _, ipNet := range s.trustedProxyNets {
 		if ipNet.Contains(ip) {
 			return true
