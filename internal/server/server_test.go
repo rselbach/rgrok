@@ -218,6 +218,60 @@ func TestHandlePublicRejectsWhenTunnelBusy(t *testing.T) {
 	r.Contains(rec.Body.String(), "tunnel busy")
 }
 
+func TestHandlePublicClampsInvalidStatusCode(t *testing.T) {
+	tests := map[string]struct {
+		statusCode int
+		want       int
+	}{
+		"too large": {statusCode: 99999, want: http.StatusBadGateway},
+		"negative":  {statusCode: -1, want: http.StatusBadGateway},
+		"below 100": {statusCode: 7, want: http.StatusBadGateway},
+		"zero":      {statusCode: 0, want: http.StatusOK},
+		"valid":     {statusCode: http.StatusTeapot, want: http.StatusTeapot},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			r := require.New(t)
+
+			tun := &tunnel{
+				id:           "demo",
+				host:         "demo.localhost:7000",
+				requestSlots: make(chan struct{}, 1),
+				send:         make(chan protocol.Message, 1),
+				done:         make(chan struct{}),
+				pending:      make(map[uint64]chan protocol.Message),
+			}
+			go func() {
+				msg := <-tun.send
+				tun.dispatch(protocol.Message{
+					Type:       protocol.TypeResponse,
+					StreamID:   msg.StreamID,
+					StatusCode: tc.statusCode,
+				})
+			}()
+
+			s := &Server{
+				cfg: Config{
+					Domain:       "localhost:7000",
+					PublicScheme: "http",
+					MaxBodyBytes: maxBodyBytesDefault,
+					Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+				},
+				tunnels: map[string]*tunnel{
+					"demo.localhost:7000": tun,
+				},
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "http://demo.localhost:7000/", nil)
+			req.Host = "demo.localhost:7000"
+			rec := httptest.NewRecorder()
+
+			s.handlePublic(rec, req)
+			r.Equal(tc.want, rec.Code)
+		})
+	}
+}
+
 func TestFailPendingDoesNotBlockWhenResponseQueued(t *testing.T) {
 	r := require.New(t)
 

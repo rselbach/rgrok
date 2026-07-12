@@ -561,6 +561,10 @@ func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
 	if status == 0 {
 		status = http.StatusOK
 	}
+	// The status comes from client JSON; WriteHeader panics outside 1xx-9xx.
+	if status < 100 || status > 999 {
+		status = http.StatusBadGateway
+	}
 	w.WriteHeader(status)
 	_, _ = w.Write(resp.Body)
 }
