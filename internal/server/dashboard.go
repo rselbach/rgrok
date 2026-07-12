@@ -2,6 +2,7 @@ package server
 
 import (
 	_ "embed"
+	"fmt"
 	"html/template"
 	"net/http"
 	"sort"
@@ -25,6 +26,21 @@ type dashboardAPITokenOption struct {
 	Default bool
 }
 
+type dashboardApplication struct {
+	StoredApplicationProfile
+	RoutesText string
+}
+
+type dashboardReservation struct {
+	ProfileID   string
+	ProfileName string
+	InstanceID  string
+	TunnelID    string
+	PublicURL   string
+	CreatedAt   time.Time
+	LastUsedAt  time.Time
+}
+
 type dashboardViewData struct {
 	Session                StoredSession
 	Tunnels                []dashboardTunnel
@@ -35,6 +51,8 @@ type dashboardViewData struct {
 	CreatedAPIToken        string
 	CreatedAPITokenName    string
 	CreatedAPITokenExpires time.Time
+	Applications           []dashboardApplication
+	Reservations           []dashboardReservation
 }
 
 func (s *Server) handleGitHubLogin(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +155,33 @@ func (s *Server) renderDashboard(w http.ResponseWriter, session StoredSession, c
 	}
 	if session.Admin {
 		data.Users = s.store.ListUsers()
+		for _, profile := range s.store.ListApplicationProfiles() {
+			lines := make([]string, 0, len(profile.Routes))
+			for _, route := range profile.Routes {
+				lines = append(lines, strings.Join(route.Methods, ",")+" "+route.Path)
+			}
+			data.Applications = append(data.Applications, dashboardApplication{
+				StoredApplicationProfile: profile,
+				RoutesText:               strings.Join(lines, "\n"),
+			})
+			for instanceID, instance := range profile.Instances {
+				data.Reservations = append(data.Reservations, dashboardReservation{
+					ProfileID:   profile.ID,
+					ProfileName: profile.Name,
+					InstanceID:  instanceID,
+					TunnelID:    instance.TunnelID,
+					PublicURL:   s.cfg.PublicScheme + "://" + instance.TunnelID + "." + s.cfg.Domain,
+					CreatedAt:   instance.CreatedAt,
+					LastUsedAt:  instance.LastUsedAt,
+				})
+			}
+		}
+		sort.Slice(data.Reservations, func(i, j int) bool {
+			if data.Reservations[i].ProfileName == data.Reservations[j].ProfileName {
+				return data.Reservations[i].TunnelID < data.Reservations[j].TunnelID
+			}
+			return data.Reservations[i].ProfileName < data.Reservations[j].ProfileName
+		})
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -145,6 +190,156 @@ func (s *Server) renderDashboard(w http.ResponseWriter, session StoredSession, c
 	if err := dashboardTemplate.Execute(w, data); err != nil {
 		s.cfg.Logger.Error("dashboard render failed", "err", err)
 	}
+}
+
+type applicationProfileForm struct {
+	name               string
+	publicKey          string
+	routes             []StoredApplicationRoute
+	requestsPerMinute  int
+	requestBurst       int
+	concurrentRequests int
+}
+
+func parseApplicationProfileForm(r *http.Request) (applicationProfileForm, error) {
+	routes, err := parseApplicationRoutes(r.PostForm.Get("routes"))
+	if err != nil {
+		return applicationProfileForm{}, err
+	}
+	requestsPerMinute, err := positiveFormInt(r.PostForm.Get("requests_per_minute"), "requests per minute")
+	if err != nil {
+		return applicationProfileForm{}, err
+	}
+	requestBurst, err := positiveFormInt(r.PostForm.Get("request_burst"), "request burst")
+	if err != nil {
+		return applicationProfileForm{}, err
+	}
+	concurrentRequests, err := positiveFormInt(r.PostForm.Get("concurrent_requests"), "concurrent requests")
+	if err != nil {
+		return applicationProfileForm{}, err
+	}
+	return applicationProfileForm{
+		name:               r.PostForm.Get("name"),
+		publicKey:          r.PostForm.Get("public_key"),
+		routes:             routes,
+		requestsPerMinute:  requestsPerMinute,
+		requestBurst:       requestBurst,
+		concurrentRequests: concurrentRequests,
+	}, nil
+}
+
+func (s *Server) handleCreateApplication(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireCSRF(w, r, session) {
+		return
+	}
+	form, err := parseApplicationProfileForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	profile, err := s.store.CreateApplicationProfile(
+		form.name,
+		form.publicKey,
+		form.routes,
+		form.requestsPerMinute,
+		form.requestBurst,
+		form.concurrentRequests,
+	)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.cfg.Logger.Info("application profile created", "actor", session.Login, "id", profile.ID, "name", profile.Name)
+	http.Redirect(w, r, "/dashboard#applications", http.StatusFound)
+}
+
+func (s *Server) handleUpdateApplication(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireCSRF(w, r, session) {
+		return
+	}
+	id := r.PostForm.Get("id")
+	if _, ok := s.store.ApplicationProfile(id); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	form, err := parseApplicationProfileForm(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	profile, err := s.store.UpdateApplicationProfile(
+		id,
+		form.name,
+		form.publicKey,
+		form.routes,
+		form.requestsPerMinute,
+		form.requestBurst,
+		form.concurrentRequests,
+	)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.disconnectApplicationTunnels(id)
+	s.cfg.Logger.Info("application profile updated", "actor", session.Login, "id", id, "name", profile.Name)
+	http.Redirect(w, r, "/dashboard#applications", http.StatusFound)
+}
+
+func (s *Server) handleDeleteApplication(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireCSRF(w, r, session) {
+		return
+	}
+	id := r.PostForm.Get("id")
+	if err := s.store.DeleteApplicationProfile(id); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	s.disconnectApplicationTunnels(id)
+	s.cfg.Logger.Info("application profile deleted", "actor", session.Login, "id", id)
+	http.Redirect(w, r, "/dashboard#applications", http.StatusFound)
+}
+
+func (s *Server) handleUnreserveApplicationTunnel(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	if !s.requireCSRF(w, r, session) {
+		return
+	}
+	profileID := r.PostForm.Get("profile_id")
+	instanceID := r.PostForm.Get("instance_id")
+	deleted, err := s.store.UnreserveApplicationTunnel(profileID, instanceID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !deleted {
+		http.NotFound(w, r)
+		return
+	}
+	s.cfg.Logger.Info("application tunnel unreserved", "actor", session.Login, "profile_id", profileID, "instance_id", instanceID)
+	http.Redirect(w, r, "/dashboard#reserved-names", http.StatusFound)
+}
+
+func positiveFormInt(raw, name string) (int, error) {
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return value, nil
 }
 
 func (s *Server) handleCreateAPIToken(w http.ResponseWriter, r *http.Request) {
@@ -373,6 +568,20 @@ func (s *Server) disconnectTunnel(id string, session StoredSession) bool {
 	}
 	_ = target.conn.Close()
 	return true
+}
+
+func (s *Server) disconnectApplicationTunnels(profileID string) {
+	s.mu.RLock()
+	targets := make([]*tunnel, 0)
+	for _, t := range s.tunnels {
+		if t.applicationProfileID == profileID {
+			targets = append(targets, t)
+		}
+	}
+	s.mu.RUnlock()
+	for _, target := range targets {
+		_ = target.conn.Close()
+	}
 }
 
 func (s *Server) callbackURL() string {

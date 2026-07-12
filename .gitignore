@@ -12,6 +12,8 @@ coverage.*
 rgrok.json
 rgrok.json.tmp
 
+deploy/deploy-server.sh
+
 # OS/editor noise
 .DS_Store
 .idea/

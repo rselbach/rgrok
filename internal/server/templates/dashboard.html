@@ -46,7 +46,7 @@ body {
   background: var(--bg);
   color: var(--text);
 }
-button, input, select { font: inherit; color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
@@ -438,7 +438,8 @@ td.cell-widget { overflow: visible; }
   font-weight: 600;
 }
 .field input,
-.field select {
+.field select,
+.field textarea {
   width: 100%;
   min-height: 34px;
   padding: 7px 10px;
@@ -507,6 +508,16 @@ td.cell-widget { overflow: visible; }
         API tokens
       </a>
       {{if .Session.Admin}}
+	  <a class="side-item" href="#applications">
+		<span class="icon" aria-hidden="true"></span>
+		Applications
+		<span class="badge">{{len .Applications}}</span>
+	  </a>
+      <a class="side-item" href="#reserved-names">
+        <span class="icon" aria-hidden="true"></span>
+        Reserved names
+        <span class="badge">{{len .Reservations}}</span>
+      </a>
       <a class="side-item" href="#users">
         <span class="icon" aria-hidden="true">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -719,6 +730,136 @@ td.cell-widget { overflow: visible; }
     </div>
 
     {{if .Session.Admin}}
+    <section class="card" id="applications">
+      <div class="card-header">
+        <h2>Application profiles</h2>
+        <a href="#create-application" class="btn btn-primary btn-sm"><span class="plus">+</span> Create application</a>
+      </div>
+      <div class="table-wrap">
+        {{if .Applications}}
+        <table>
+          <thead><tr><th>Name</th><th>Profile ID</th><th>Public key</th><th>Limits</th><th class="col-actions">Actions</th></tr></thead>
+          <tbody>
+            {{range .Applications}}
+            <tr>
+              <td>
+                <div class="row-title">{{.Name}}</div>
+                {{range .Routes}}<div><code>{{range .Methods}}{{.}} {{end}}{{.Path}}</code></div>{{end}}
+              </td>
+              <td><code>{{.ID}}</code></td>
+              <td><code>{{.PublicKeyFingerprint}}</code></td>
+              <td>{{.RequestsPerMinute}}/min, burst {{.RequestBurst}}, {{.ConcurrentRequests}} concurrent</td>
+              <td class="col-actions cell-widget">
+                <div class="row-actions">
+                  <a class="icon-btn" href="#edit-application-{{.ID}}" title="Edit" aria-label="Edit">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M10.5 2.5l3 3-8 8H2.5v-3z"/><path d="M9 4l3 3"/>
+                    </svg>
+                  </a>
+                  <form method="post" action="/dashboard/applications/delete">
+                    <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
+                    <input type="hidden" name="id" value="{{.ID}}">
+                    <button class="icon-btn danger" type="submit" title="Delete" aria-label="Delete">
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M2 4h12"/><path d="M5 4V2.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V4"/><path d="M4.5 4l.6 8a1 1 0 0 0 1 1h4.8a1 1 0 0 0 1-1l.6-8"/>
+                      </svg>
+                    </button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{else}}
+        <div style="padding: 32px 14px; text-align: center; color: var(--muted);">No application profiles.</div>
+        {{end}}
+      </div>
+    </section>
+
+    <section class="card" id="reserved-names">
+      <div class="card-header">
+        <h2>Reserved names</h2>
+      </div>
+      <div class="table-wrap">
+        {{if .Reservations}}
+        <table>
+          <thead><tr><th>Application</th><th>Reserved name</th><th>Instance ID</th><th>Originally requested</th><th>Last requested</th><th class="col-actions">Actions</th></tr></thead>
+          <tbody>
+            {{range .Reservations}}
+            <tr>
+              <td><div class="row-title">{{.ProfileName}}</div></td>
+              <td><a href="{{.PublicURL}}"><code>{{.TunnelID}}</code></a></td>
+              <td><code>{{.InstanceID}}</code></td>
+              <td>{{.CreatedAt.Format "2006-01-02 15:04 UTC"}}</td>
+              <td>{{.LastUsedAt.Format "2006-01-02 15:04 UTC"}}</td>
+              <td class="col-actions cell-widget">
+                <form method="post" action="/dashboard/applications/reservations/delete">
+                  <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
+                  <input type="hidden" name="profile_id" value="{{.ProfileID}}">
+                  <input type="hidden" name="instance_id" value="{{.InstanceID}}">
+                  <button class="btn btn-danger btn-sm" type="submit">Unreserve</button>
+                </form>
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{else}}
+        <div style="padding: 32px 14px; text-align: center; color: var(--muted);">No reserved names.</div>
+        {{end}}
+      </div>
+    </section>
+
+    <div class="modal" id="create-application" role="dialog" aria-modal="true" aria-labelledby="create-application-title">
+      <a class="modal-backdrop" href="#applications" aria-label="Close"></a>
+      <form method="post" action="/dashboard/applications/create" class="modal-card">
+        <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
+        <div class="modal-header">
+          <h3 id="create-application-title">Create application profile</h3>
+          <a class="icon-btn" href="#applications" title="Close" aria-label="Close">×</a>
+        </div>
+        <div class="modal-body">
+          <div class="field"><label for="application-name">Name</label><input id="application-name" name="name" maxlength="80" required></div>
+          <div class="field"><label for="application-public-key">Ed25519 public key</label><textarea id="application-public-key" name="public_key" rows="3" required></textarea></div>
+          <div class="field"><label for="application-routes">Routes, one <code>METHOD[,METHOD] PATH</code> per line</label><textarea id="application-routes" name="routes" rows="8" required></textarea></div>
+          <div class="field"><label for="application-rate">Requests per minute</label><input id="application-rate" type="number" name="requests_per_minute" min="1" value="30" required></div>
+          <div class="field"><label for="application-burst">Request burst</label><input id="application-burst" type="number" name="request_burst" min="1" value="10" required></div>
+          <div class="field"><label for="application-concurrency">Concurrent requests</label><input id="application-concurrency" type="number" name="concurrent_requests" min="1" value="4" required></div>
+        </div>
+        <div class="modal-actions">
+          <a class="btn btn-sm" href="#applications">Cancel</a>
+          <button type="submit" class="btn btn-primary btn-sm"><span class="plus">+</span> Create application</button>
+        </div>
+      </form>
+    </div>
+
+    {{range .Applications}}
+    <div class="modal" id="edit-application-{{.ID}}" role="dialog" aria-modal="true" aria-labelledby="edit-application-title-{{.ID}}">
+      <a class="modal-backdrop" href="#applications" aria-label="Close"></a>
+      <form method="post" action="/dashboard/applications/update" class="modal-card">
+        <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
+        <input type="hidden" name="id" value="{{.ID}}">
+        <div class="modal-header">
+          <h3 id="edit-application-title-{{.ID}}">Edit application profile</h3>
+          <a class="icon-btn" href="#applications" title="Close" aria-label="Close">×</a>
+        </div>
+        <div class="modal-body">
+          <div class="field"><label for="application-name-{{.ID}}">Name</label><input id="application-name-{{.ID}}" name="name" maxlength="80" value="{{.Name}}" required></div>
+          <div class="field"><label for="application-public-key-{{.ID}}">Ed25519 public key</label><textarea id="application-public-key-{{.ID}}" name="public_key" rows="3" required>{{.PublicKey}}</textarea></div>
+          <div class="field"><label for="application-routes-{{.ID}}">Routes, one <code>METHOD[,METHOD] PATH</code> per line</label><textarea id="application-routes-{{.ID}}" name="routes" rows="8" required>{{.RoutesText}}</textarea></div>
+          <div class="field"><label for="application-rate-{{.ID}}">Requests per minute</label><input id="application-rate-{{.ID}}" type="number" name="requests_per_minute" min="1" value="{{.RequestsPerMinute}}" required></div>
+          <div class="field"><label for="application-burst-{{.ID}}">Request burst</label><input id="application-burst-{{.ID}}" type="number" name="request_burst" min="1" value="{{.RequestBurst}}" required></div>
+          <div class="field"><label for="application-concurrency-{{.ID}}">Concurrent requests</label><input id="application-concurrency-{{.ID}}" type="number" name="concurrent_requests" min="1" value="{{.ConcurrentRequests}}" required></div>
+        </div>
+        <div class="modal-actions">
+          <a class="btn btn-sm" href="#applications">Cancel</a>
+          <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
+        </div>
+      </form>
+    </div>
+    {{end}}
+
     <section class="card" id="users">
       <div class="card-header">
         <h2>Whitelist</h2>

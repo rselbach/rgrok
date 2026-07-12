@@ -2,6 +2,8 @@ package client
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +14,61 @@ import (
 	"github.com/rselbach/rgrok/internal/protocol"
 	"github.com/stretchr/testify/require"
 )
+
+func TestStartReturnsApplicationTunnel(t *testing.T) {
+	r := require.New(t)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	r.NoError(err)
+
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := upgrader.Upgrade(w, req, nil)
+		r.NoError(err)
+		defer func() { r.NoError(conn.Close()) }()
+
+		var registration protocol.Message
+		r.NoError(conn.ReadJSON(&registration))
+		r.Empty(registration.AuthToken)
+		r.Equal("0123456789abcdef0123456789abcdef", registration.ApplicationProfileID)
+		r.Equal("installation-1", registration.InstanceID)
+
+		challenge := "greendale-challenge"
+		r.NoError(conn.WriteJSON(protocol.Message{
+			Type:      protocol.TypeApplicationChallenge,
+			Challenge: challenge,
+		}))
+		var response protocol.Message
+		r.NoError(conn.ReadJSON(&response))
+		payload := protocol.ApplicationChallengePayload(registration.ApplicationProfileID, registration.InstanceID, challenge)
+		r.True(ed25519.Verify(publicKey, payload, response.Signature))
+		r.NoError(conn.WriteJSON(protocol.Message{
+			Type:      protocol.TypeTunnelRegistered,
+			TunnelID:  "human-timeline-club",
+			PublicURL: "https://human-timeline-club.example.com",
+		}))
+
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tun, err := Start(ctx, Config{
+		ServerURL:             wsURL,
+		ApplicationProfileID:  "0123456789abcdef0123456789abcdef",
+		InstanceID:            "installation-1",
+		ApplicationPrivateKey: privateKey,
+		LocalPort:             3000,
+	})
+	r.NoError(err)
+	r.Equal("human-timeline-club", tun.ID)
+	r.NoError(tun.Close())
+}
 
 func TestStartReturnsRegisteredTunnel(t *testing.T) {
 	r := require.New(t)

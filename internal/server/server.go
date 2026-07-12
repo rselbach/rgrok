@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	_ "embed"
 	"encoding/json"
@@ -88,14 +89,18 @@ type deviceLogin struct {
 }
 
 type tunnel struct {
-	id           string
-	host         string
-	publicURL    string
-	owner        string
-	conn         *websocket.Conn
-	send         chan protocol.Message
-	done         chan struct{}
-	requestSlots chan struct{}
+	id                   string
+	host                 string
+	publicURL            string
+	owner                string
+	applicationProfileID string
+	instanceID           string
+	routes               []StoredApplicationRoute
+	rateLimiter          *applicationRateLimiter
+	conn                 *websocket.Conn
+	send                 chan protocol.Message
+	done                 chan struct{}
+	requestSlots         chan struct{}
 
 	pendingMu sync.Mutex
 	pending   map[uint64]chan protocol.Message
@@ -177,6 +182,10 @@ func (s *Server) Run() error {
 	mux.HandleFunc("/dashboard/tunnels", s.baseHostOnly(s.handleDashboardTunnels))
 	mux.HandleFunc("/dashboard/api-tokens/create", s.baseHostOnly(s.requirePost(s.handleCreateAPIToken)))
 	mux.HandleFunc("/dashboard/api-tokens/delete", s.baseHostOnly(s.requirePost(s.handleDeleteAPIToken)))
+	mux.HandleFunc("/dashboard/applications/create", s.baseHostOnly(s.requirePost(s.handleCreateApplication)))
+	mux.HandleFunc("/dashboard/applications/update", s.baseHostOnly(s.requirePost(s.handleUpdateApplication)))
+	mux.HandleFunc("/dashboard/applications/delete", s.baseHostOnly(s.requirePost(s.handleDeleteApplication)))
+	mux.HandleFunc("/dashboard/applications/reservations/delete", s.baseHostOnly(s.requirePost(s.handleUnreserveApplicationTunnel)))
 	mux.HandleFunc("/dashboard/users/add", s.baseHostOnly(s.requirePost(s.handleAddUser)))
 	mux.HandleFunc("/dashboard/users/delete", s.baseHostOnly(s.requirePost(s.handleDeleteUser)))
 	mux.HandleFunc("/dashboard/tunnels/disconnect", s.baseHostOnly(s.requirePost(s.handleDisconnectTunnel)))
@@ -351,13 +360,18 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientToken, ok := s.store.ClientToken(reg.AuthToken)
-	if !ok {
-		writeClose(conn, websocket.ClosePolicyViolation, "invalid rgrok login token")
+	owner, profile, err := s.authenticateTunnelRegistration(conn, reg)
+	if err != nil {
+		writeClose(conn, websocket.ClosePolicyViolation, err.Error())
 		return
 	}
 
-	id, err := s.chooseID(reg.RequestedID)
+	var id string
+	if profile == nil {
+		id, err = s.chooseID(reg.RequestedID)
+	} else {
+		id, err = s.chooseApplicationID(profile.ID, reg.InstanceID)
+	}
 	if err != nil {
 		writeClose(conn, websocket.ClosePolicyViolation, err.Error())
 		return
@@ -365,20 +379,35 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 	host := id + "." + s.cfg.Domain
 	t := &tunnel{
-		id:           id,
-		host:         host,
-		publicURL:    s.cfg.PublicScheme + "://" + host,
-		owner:        clientToken.Login,
-		conn:         conn,
-		send:         make(chan protocol.Message, sendChannelSize),
-		done:         make(chan struct{}),
-		requestSlots: make(chan struct{}, s.maxRequestsPerTunnel()),
-		pending:      make(map[uint64]chan protocol.Message),
+		id:        id,
+		host:      host,
+		publicURL: s.cfg.PublicScheme + "://" + host,
+		owner:     owner,
+		conn:      conn,
+		send:      make(chan protocol.Message, sendChannelSize),
+		done:      make(chan struct{}),
+		pending:   make(map[uint64]chan protocol.Message),
+	}
+	if profile == nil {
+		t.requestSlots = make(chan struct{}, s.maxRequestsPerTunnel())
+	} else {
+		t.applicationProfileID = profile.ID
+		t.instanceID = reg.InstanceID
+		t.routes = profile.Routes
+		t.rateLimiter = newApplicationRateLimiter(profile.RequestsPerMinute, profile.RequestBurst)
+		t.requestSlots = make(chan struct{}, profile.ConcurrentRequests)
 	}
 
 	if err := s.registerTunnel(t); err != nil {
 		writeClose(conn, websocket.ClosePolicyViolation, err.Error())
 		return
+	}
+	if profile != nil {
+		if err := s.store.RememberApplicationTunnel(profile.ID, reg.InstanceID, id); err != nil {
+			s.unregisterTunnel(t)
+			writeClose(conn, websocket.CloseInternalServerErr, "could not remember application tunnel")
+			return
+		}
 	}
 	defer s.unregisterTunnel(t)
 
@@ -430,8 +459,22 @@ func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
 		s.writeIndexOrNotFound(w, r)
 		return
 	}
+	if t.applicationProfileID != "" {
+		if !applicationRequestAllowed(t.routes, r) {
+			http.NotFound(w, r)
+			return
+		}
+		if !t.rateLimiter.allow() {
+			http.Error(w, "tunnel rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+	}
 	if !t.acquireRequestSlot() {
-		http.Error(w, "tunnel busy", http.StatusServiceUnavailable)
+		status := http.StatusServiceUnavailable
+		if t.applicationProfileID != "" {
+			status = http.StatusTooManyRequests
+		}
+		http.Error(w, "tunnel busy", status)
 		return
 	}
 	defer t.releaseRequestSlot()
@@ -505,6 +548,55 @@ func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(resp.Body)
 }
 
+func (s *Server) authenticateTunnelRegistration(conn *websocket.Conn, reg protocol.Message) (string, *StoredApplicationProfile, error) {
+	if reg.AuthToken != "" {
+		if reg.ApplicationProfileID != "" || reg.InstanceID != "" {
+			return "", nil, errors.New("registration cannot use both token and application authentication")
+		}
+		clientToken, ok := s.store.ClientToken(reg.AuthToken)
+		if !ok {
+			return "", nil, errors.New("invalid rgrok login token")
+		}
+		return clientToken.Login, nil, nil
+	}
+	if reg.RequestedID != "" {
+		return "", nil, errors.New("application tunnels cannot request a name")
+	}
+	if !applicationIDRE.MatchString(reg.ApplicationProfileID) || !instanceIDRE.MatchString(reg.InstanceID) {
+		return "", nil, errors.New("invalid application profile or instance id")
+	}
+	profile, ok := s.store.ApplicationProfile(reg.ApplicationProfileID)
+	if !ok {
+		return "", nil, errors.New("invalid application profile")
+	}
+	challenge, err := randomHex(32)
+	if err != nil {
+		return "", nil, errors.New("could not create application challenge")
+	}
+	if err := conn.WriteJSON(protocol.Message{
+		Type:      protocol.TypeApplicationChallenge,
+		Challenge: challenge,
+	}); err != nil {
+		return "", nil, fmt.Errorf("write application challenge: %w", err)
+	}
+	var response protocol.Message
+	if err := conn.ReadJSON(&response); err != nil {
+		return "", nil, fmt.Errorf("read application signature: %w", err)
+	}
+	if response.Type != protocol.TypeApplicationSignature {
+		return "", nil, errors.New("expected application signature")
+	}
+	_, publicKey, _, err := parseEd25519PublicKey(profile.PublicKey)
+	if err != nil {
+		return "", nil, errors.New("application profile has an invalid public key")
+	}
+	payload := protocol.ApplicationChallengePayload(profile.ID, reg.InstanceID, challenge)
+	if !ed25519.Verify(publicKey, payload, response.Signature) {
+		return "", nil, errors.New("invalid application signature")
+	}
+	return "application:" + profile.Name, &profile, nil
+}
+
 func (s *Server) tunnelForHost(host string) *tunnel {
 	host = strings.ToLower(host)
 	s.mu.RLock()
@@ -567,6 +659,29 @@ func (s *Server) chooseID(requested string) (string, error) {
 	return "", errors.New("could not allocate tunnel id")
 }
 
+func (s *Server) chooseApplicationID(profileID, instanceID string) (string, error) {
+	s.mu.RLock()
+	for _, existing := range s.tunnels {
+		if existing.applicationProfileID == profileID && existing.instanceID == instanceID {
+			s.mu.RUnlock()
+			return "", errors.New("application instance already has an active tunnel")
+		}
+	}
+	s.mu.RUnlock()
+
+	remembered := s.store.ApplicationTunnelID(profileID, instanceID)
+	if remembered != "" {
+		host := remembered + "." + s.cfg.Domain
+		s.mu.RLock()
+		_, exists := s.tunnels[strings.ToLower(host)]
+		s.mu.RUnlock()
+		if !exists {
+			return remembered, nil
+		}
+	}
+	return s.chooseID("")
+}
+
 func (s *Server) maxRequestsPerTunnel() int {
 	if s.cfg.MaxRequestsPerTunnel > 0 {
 		return s.cfg.MaxRequestsPerTunnel
@@ -580,7 +695,14 @@ func (s *Server) registerTunnel(t *tunnel) error {
 
 	count := 0
 	for _, existing := range s.tunnels {
-		if existing.owner == t.owner {
+		if t.applicationProfileID != "" && existing.applicationProfileID == t.applicationProfileID && existing.instanceID == t.instanceID {
+			return errors.New("application instance already has an active tunnel")
+		}
+		if t.applicationProfileID != "" && existing.applicationProfileID == t.applicationProfileID {
+			count++
+			continue
+		}
+		if t.applicationProfileID == "" && existing.owner == t.owner {
 			count++
 		}
 	}

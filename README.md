@@ -97,6 +97,30 @@ defer tun.Close()
 publicBaseURL := tun.PublicURL
 ```
 
+Admins can also create application profiles in the dashboard for tools that do
+not have a user account. An application profile contains an Ed25519 OpenSSH
+public key, allowed method/path templates, and per-tunnel request limits. Paths
+support full-segment parameters such as `{slug}`.
+
+Application clients prove possession of the corresponding private key and
+receive a random tunnel name. `InstanceID` is a stable, client-generated value
+used to reuse that random name when it is available. Admins can inspect and
+remove these reserved names from the dashboard.
+
+```go
+tun, err := rgrokclient.Start(ctx, rgrokclient.Config{
+	ServerBaseURL:         "https://rgrok.rselbach.com",
+	ApplicationProfileID: "0123456789abcdef0123456789abcdef",
+	InstanceID:           installationID,
+	ApplicationPrivateKey: privateKey,
+	LocalPort:             1234,
+})
+```
+
+`ApplicationPrivateKey` is an `ed25519.PrivateKey`; loading an encrypted or
+unencrypted OpenSSH private-key file is the embedding tool's responsibility.
+Existing API-token clients continue to use the original registration flow.
+
 For service-style clients, set `RGROK_CONFIG` while running `rgrok login` to
 write the token to a predictable file:
 
@@ -106,9 +130,10 @@ sudo chown root:root /etc/rgrok/rgrok-client@demo.json
 sudo chmod 0600 /etc/rgrok/rgrok-client@demo.json
 ```
 
-The server stores its whitelist, sessions, and default admin user in the JSON
-file passed with `--data`. The initial whitelist contains `rselbach` as an
-admin. The dashboard is available at `https://rgrok.rselbach.com/dashboard`.
+The server stores its whitelist, sessions, application profiles, and default
+admin user in the JSON file passed with `--data`. The initial whitelist
+contains `rselbach` as an admin. The dashboard is available at
+`https://rgrok.rselbach.com/dashboard`.
 
 Sample deployment files for `rgrok.rselbach.com` live in `deploy/`:
 

@@ -3,6 +3,7 @@ package client
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,9 @@ type Config struct {
 	ServerURL             string
 	ServerBaseURL         string
 	Token                 string
+	ApplicationProfileID  string
+	InstanceID            string
+	ApplicationPrivateKey ed25519.PrivateKey
 	Name                  string
 	LocalHost             string
 	LocalPort             int
@@ -45,11 +49,21 @@ func Start(ctx context.Context, cfg Config) (*Tunnel, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if cfg.Token == "" {
+	if cfg.Token == "" && cfg.ApplicationProfileID == "" {
 		cfg.Token = os.Getenv("RGROK_API_TOKEN")
 	}
-	if cfg.Token == "" {
-		return nil, errors.New("rgrok token is required")
+	usingToken := cfg.Token != ""
+	usingApplication := cfg.ApplicationProfileID != "" || cfg.InstanceID != "" || len(cfg.ApplicationPrivateKey) != 0
+	if usingToken == usingApplication {
+		return nil, errors.New("exactly one of token or application authentication is required")
+	}
+	if usingApplication {
+		if cfg.ApplicationProfileID == "" || cfg.InstanceID == "" || len(cfg.ApplicationPrivateKey) != ed25519.PrivateKeySize {
+			return nil, errors.New("application profile id, instance id, and Ed25519 private key are required")
+		}
+		if cfg.Name != "" {
+			return nil, errors.New("application tunnels cannot request a name")
+		}
 	}
 	if cfg.LocalPort <= 0 || cfg.LocalPort > 65535 {
 		return nil, fmt.Errorf("invalid local port %d", cfg.LocalPort)
@@ -72,6 +86,9 @@ func Start(ctx context.Context, cfg Config) (*Tunnel, error) {
 		ServerURL:             serverURL,
 		RequestedID:           cfg.Name,
 		AuthToken:             cfg.Token,
+		ApplicationProfileID:  cfg.ApplicationProfileID,
+		InstanceID:            cfg.InstanceID,
+		ApplicationPrivateKey: cfg.ApplicationPrivateKey,
 		LocalHost:             cfg.LocalHost,
 		LocalPort:             cfg.LocalPort,
 		PreserveHost:          cfg.PreserveHost,

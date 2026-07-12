@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"io"
@@ -32,6 +33,9 @@ type Config struct {
 	ServerURL             string
 	RequestedID           string
 	AuthToken             string
+	ApplicationProfileID  string
+	InstanceID            string
+	ApplicationPrivateKey ed25519.PrivateKey
 	LocalHost             string
 	LocalPort             int
 	PreserveHost          bool
@@ -175,10 +179,12 @@ func (c *Client) runOnce(ctx context.Context) error {
 	}()
 
 	if err := conn.WriteJSON(protocol.Message{
-		Type:        protocol.TypeRegisterTunnel,
-		RequestedID: c.cfg.RequestedID,
-		AuthToken:   c.cfg.AuthToken,
-		LocalPort:   c.cfg.LocalPort,
+		Type:                 protocol.TypeRegisterTunnel,
+		RequestedID:          c.cfg.RequestedID,
+		AuthToken:            c.cfg.AuthToken,
+		LocalPort:            c.cfg.LocalPort,
+		ApplicationProfileID: c.cfg.ApplicationProfileID,
+		InstanceID:           c.cfg.InstanceID,
 	}); err != nil {
 		return err
 	}
@@ -186,6 +192,26 @@ func (c *Client) runOnce(ctx context.Context) error {
 	var registered protocol.Message
 	if err := conn.ReadJSON(&registered); err != nil {
 		return err
+	}
+	if registered.Type == protocol.TypeApplicationChallenge {
+		if len(c.cfg.ApplicationPrivateKey) != ed25519.PrivateKeySize {
+			return fmt.Errorf("%w: application private key is required", errTerminal)
+		}
+		payload := protocol.ApplicationChallengePayload(
+			c.cfg.ApplicationProfileID,
+			c.cfg.InstanceID,
+			registered.Challenge,
+		)
+		signature := ed25519.Sign(c.cfg.ApplicationPrivateKey, payload)
+		if err := conn.WriteJSON(protocol.Message{
+			Type:      protocol.TypeApplicationSignature,
+			Signature: signature,
+		}); err != nil {
+			return err
+		}
+		if err := conn.ReadJSON(&registered); err != nil {
+			return err
+		}
 	}
 	if registered.Type != protocol.TypeTunnelRegistered {
 		return fmt.Errorf("%w: expected tunnel_registered, got %q", errTerminal, registered.Type)
