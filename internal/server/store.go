@@ -188,6 +188,18 @@ func (s *Store) DeleteSession(id string) error {
 	return s.saveLocked()
 }
 
+func (s *Store) DeleteSessionsForUser(login string) error {
+	login = normalizeLogin(login)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, session := range s.data.Sessions {
+		if normalizeLogin(session.Login) == login {
+			delete(s.data.Sessions, id)
+		}
+	}
+	return s.saveLocked()
+}
+
 func (s *Store) CreateClientToken(login string, admin bool) (StoredClientToken, error) {
 	return s.CreateClientTokenWithLifetime(login, admin, clientTokenLifetime)
 }

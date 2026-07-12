@@ -816,6 +816,10 @@ func TestRevokeSessions(t *testing.T) {
 
 	session, err := store.CreateSession("abed", false)
 	r.NoError(err)
+	otherSession, err := store.CreateSession("abed", false)
+	r.NoError(err)
+	troySession, err := store.CreateSession("troy", false)
+	r.NoError(err)
 
 	req := httptest.NewRequest(http.MethodPost, "/dashboard/sessions/revoke", strings.NewReader("csrf_token="+session.CSRFToken))
 	req.Host = "localhost:7000"
@@ -836,9 +840,15 @@ func TestRevokeSessions(t *testing.T) {
 	_, ok = store.ClientToken(token3.PlainToken)
 	r.True(ok)
 
-	// Session should be deleted too.
+	// All of abed's sessions should be deleted, not just the current one.
 	_, ok = store.Session(session.ID)
 	r.False(ok)
+	_, ok = store.Session(otherSession.ID)
+	r.False(ok)
+
+	// troy's session should remain.
+	_, ok = store.Session(troySession.ID)
+	r.True(ok)
 }
 
 func TestDeviceLoginRateLimit(t *testing.T) {

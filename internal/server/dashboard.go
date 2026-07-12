@@ -461,7 +461,10 @@ func (s *Server) handleRevokeSessions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = s.store.DeleteSession(session.ID)
+	if err := s.store.DeleteSessionsForUser(session.Login); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	clearCookie(w, sessionCookieName, s.cookieSecure())
 	s.cfg.Logger.Info("sessions revoked", "login", session.Login)
 	http.Redirect(w, r, "/", http.StatusFound)
