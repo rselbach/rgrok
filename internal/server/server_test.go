@@ -716,7 +716,7 @@ func TestAddForwardedHeadersDropsSpoofedPrefix(t *testing.T) {
 func TestSecurityHeadersWithHSTS(t *testing.T) {
 	r := require.New(t)
 
-	s := &Server{cfg: Config{PublicScheme: "https", BehindProxy: false, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	s := &Server{cfg: Config{Domain: "example.com", PublicScheme: "https", BehindProxy: false, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}}
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
@@ -728,6 +728,28 @@ func TestSecurityHeadersWithHSTS(t *testing.T) {
 	r.Equal(http.StatusOK, rec.Code)
 	r.NotEmpty(rec.Header().Get("Strict-Transport-Security"))
 	r.NotEmpty(rec.Header().Get("Permissions-Policy"))
+}
+
+func TestSecurityHeadersSkipTunnelHosts(t *testing.T) {
+	r := require.New(t)
+
+	s := &Server{cfg: Config{Domain: "example.com", PublicScheme: "https", Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+
+	req := httptest.NewRequest(http.MethodGet, "http://demo.example.com/", nil)
+	req.Host = "demo.example.com"
+	rec := httptest.NewRecorder()
+
+	s.securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The tunneled app's own policy must pass through untouched.
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rec, req)
+
+	r.Equal(http.StatusOK, rec.Code)
+	r.Equal([]string{"SAMEORIGIN"}, rec.Header().Values("X-Frame-Options"))
+	r.Empty(rec.Header().Get("X-Content-Type-Options"))
+	r.Empty(rec.Header().Get("Strict-Transport-Security"))
+	r.Empty(rec.Header().Get("Permissions-Policy"))
 }
 
 func TestCookieSecureBehindProxy(t *testing.T) {

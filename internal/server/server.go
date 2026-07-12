@@ -313,14 +313,19 @@ func (s *Server) cookieSecure() bool {
 	return s.cfg.PublicScheme == "https" || s.cfg.BehindProxy
 }
 
+// securityHeaders hardens the server's own pages. Tunnel hosts are skipped:
+// their responses belong to the proxied app, and presetting headers here
+// would duplicate or override the app's own policies.
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		w.Header().Set("Permissions-Policy", "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()")
-		if s.cfg.PublicScheme == "https" || s.cfg.BehindProxy {
-			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		if sameHost(r.Host, s.cfg.Domain) {
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			w.Header().Set("Permissions-Policy", "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()")
+			if s.cfg.PublicScheme == "https" || s.cfg.BehindProxy {
+				w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
