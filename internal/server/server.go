@@ -665,6 +665,9 @@ func (s *Server) chooseID(requested string) (string, error) {
 		if exists {
 			return "", fmt.Errorf("requested name %q is already connected", requested)
 		}
+		if s.store.TunnelIDReserved(requested) {
+			return "", fmt.Errorf("requested name %q is reserved", requested)
+		}
 		return requested, nil
 	}
 
@@ -674,7 +677,7 @@ func (s *Server) chooseID(requested string) (string, error) {
 		s.mu.RLock()
 		_, exists := s.tunnels[strings.ToLower(host)]
 		s.mu.RUnlock()
-		if !exists {
+		if !exists && !s.store.TunnelIDReserved(id) {
 			return id, nil
 		}
 	}

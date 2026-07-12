@@ -467,6 +467,21 @@ func (s *Store) DeleteApplicationProfile(id string) error {
 	return s.saveLocked()
 }
 
+// TunnelIDReserved reports whether id is remembered for any application
+// instance, so other tunnels cannot take a name an application relies on.
+func (s *Store) TunnelIDReserved(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, profile := range s.data.ApplicationProfiles {
+		for _, instance := range profile.Instances {
+			if instance.TunnelID == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *Store) ApplicationTunnelID(profileID, instanceID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

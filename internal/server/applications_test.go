@@ -466,6 +466,66 @@ func TestEndToEndApplicationTunnel(t *testing.T) {
 	r.Equal(http.StatusTooManyRequests, rateLimitedResponse.Code)
 }
 
+func TestTunnelIDReserved(t *testing.T) {
+	r := require.New(t)
+	_, _, publicKeyText := testEd25519Key(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	profile, err := store.CreateApplicationProfile(
+		"Greendale Identity",
+		publicKeyText,
+		[]StoredApplicationRoute{{Methods: []string{"GET"}, Path: "/oidc/{slug}/jwks"}},
+		30,
+		10,
+		4,
+	)
+	r.NoError(err)
+	r.NoError(store.RememberApplicationTunnel(profile.ID, "installation-1", "human-timeline-club"))
+
+	r.True(store.TunnelIDReserved("human-timeline-club"))
+	r.False(store.TunnelIDReserved("paintball-dean-quest"))
+
+	_, err = store.UnreserveApplicationTunnel(profile.ID, "installation-1")
+	r.NoError(err)
+	r.False(store.TunnelIDReserved("human-timeline-club"))
+}
+
+func TestChooseIDRejectsReservedApplicationName(t *testing.T) {
+	r := require.New(t)
+	_, _, publicKeyText := testEd25519Key(t)
+	store, err := OpenStore(t.TempDir() + "/test.json")
+	r.NoError(err)
+
+	profile, err := store.CreateApplicationProfile(
+		"Greendale Identity",
+		publicKeyText,
+		[]StoredApplicationRoute{{Methods: []string{"GET"}, Path: "/oidc/{slug}/jwks"}},
+		30,
+		10,
+		4,
+	)
+	r.NoError(err)
+	r.NoError(store.RememberApplicationTunnel(profile.ID, "installation-1", "human-timeline-club"))
+
+	s := &Server{
+		cfg: Config{
+			Domain:       "localhost:7000",
+			PublicScheme: "http",
+		},
+		store:   store,
+		tunnels: make(map[string]*tunnel),
+	}
+
+	_, err = s.chooseID("human-timeline-club")
+	r.Error(err)
+	r.Contains(err.Error(), "reserved")
+
+	id, err := s.chooseID("study-room-fort")
+	r.NoError(err)
+	r.Equal("study-room-fort", id)
+}
+
 func testEd25519Key(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey, string) {
 	t.Helper()
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
