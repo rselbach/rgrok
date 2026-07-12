@@ -15,9 +15,13 @@ const sessionCookieName = "rgrok_session"
 const stateCookieName = "rgrok_oauth_state"
 
 type dashboardTunnel struct {
-	ID        string
-	PublicURL string
-	Owner     string
+	ID          string
+	PublicURL   string
+	Owner       string
+	LocalPort   int
+	ConnectedAt int64
+	Uptime      string
+	Requests    int64
 }
 
 type dashboardAPITokenOption struct {
@@ -44,9 +48,11 @@ type dashboardReservation struct {
 type dashboardViewData struct {
 	Session                StoredSession
 	Tunnels                []dashboardTunnel
+	TotalRequests          int64
 	Users                  []StoredUser
 	APITokens              []StoredClientToken
 	BaseURL                string
+	Domain                 string
 	APITokenOptions        []dashboardAPITokenOption
 	CreatedAPIToken        string
 	CreatedAPITokenName    string
@@ -143,11 +149,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderDashboard(w http.ResponseWriter, session StoredSession, createdAPIToken string, createdAPITokenName string, createdAPITokenExpires time.Time) {
+	tunnels := s.visibleTunnels(session)
 	data := dashboardViewData{
 		Session:                session,
-		Tunnels:                s.visibleTunnels(session),
+		Tunnels:                tunnels,
+		TotalRequests:          totalRequests(tunnels),
 		APITokens:              s.store.ListClientTokensForUser(session.Login),
 		BaseURL:                s.cfg.PublicScheme + "://" + s.cfg.Domain,
+		Domain:                 s.cfg.Domain,
 		APITokenOptions:        apiTokenExpirationOptions(),
 		CreatedAPIToken:        createdAPIToken,
 		CreatedAPITokenName:    createdAPITokenName,
@@ -538,15 +547,42 @@ func (s *Server) visibleTunnels(session StoredSession) []dashboardTunnel {
 			continue
 		}
 		tunnels = append(tunnels, dashboardTunnel{
-			ID:        t.id,
-			PublicURL: t.publicURL,
-			Owner:     t.owner,
+			ID:          t.id,
+			PublicURL:   t.publicURL,
+			Owner:       t.owner,
+			LocalPort:   t.localPort,
+			ConnectedAt: t.connectedAt.Unix(),
+			Uptime:      formatUptime(time.Since(t.connectedAt)),
+			Requests:    t.requests.Load(),
 		})
 	}
 	sort.Slice(tunnels, func(i, j int) bool {
 		return tunnels[i].ID < tunnels[j].ID
 	})
 	return tunnels
+}
+
+func totalRequests(tunnels []dashboardTunnel) int64 {
+	var total int64
+	for _, t := range tunnels {
+		total += t.Requests
+	}
+	return total
+}
+
+// formatUptime renders a connection duration as a compact human string,
+// e.g. "2h 14m", "41m", "12s".
+func formatUptime(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh %02dm", int(d.Hours()), int(d.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dd %dh", int(d.Hours())/24, int(d.Hours())%24)
+	}
 }
 
 func (s *Server) disconnectTunnel(id string, session StoredSession) bool {
@@ -611,18 +647,30 @@ var tunnelsPartialHTML string
 
 var tunnelTablePartial = template.Must(template.New("tunnelTable").Parse(tunnelsPartialHTML))
 
+//go:embed templates/dashboard.js
+var dashboardJS []byte
+
+func (s *Server) handleDashboardJS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(dashboardJS)
+}
+
 func (s *Server) handleDashboardTunnels(w http.ResponseWriter, r *http.Request) {
 	session, ok := s.requireSession(w, r)
 	if !ok {
 		return
 	}
 
+	tunnels := s.visibleTunnels(session)
 	data := struct {
-		Session StoredSession
-		Tunnels []dashboardTunnel
+		Session       StoredSession
+		Tunnels       []dashboardTunnel
+		TotalRequests int64
 	}{
-		Session: session,
-		Tunnels: s.visibleTunnels(session),
+		Session:       session,
+		Tunnels:       tunnels,
+		TotalRequests: totalRequests(tunnels),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

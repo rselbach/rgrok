@@ -6,388 +6,434 @@
 <title>rgrok dashboard</title>
 <style>
 :root {
-  color-scheme: light;
-  --bg: #ffffff;
-  --bg-soft: #f9fafb;
-  --sidebar-bg: #f4f5f7;
-  --card: #ffffff;
-  --line: #e5e7eb;
-  --line-soft: #eef0f3;
-  --line-strong: #d1d5db;
-  --text: #1f2328;
-  --text-strong: #0c0c0d;
-  --muted: #6b7280;
-  --muted-2: #9ca3af;
-  --accent: #1563ff;
-  --accent-strong: #1051d8;
-  --accent-soft: #e7eeff;
-  --success: #00853e;
-  --success-soft: #dcefe2;
-  --danger: #c73444;
-  --danger-soft: #fdecec;
-  --topbar-bg: #0c0c0d;
-  --topbar-fg: #ffffff;
-  --topbar-muted: #9ca3af;
-  --topbar-pill: #1c1d22;
-  --topbar-pill-line: #2a2c33;
-  --radius: 6px;
-  --radius-lg: 8px;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  color-scheme: dark;
+  --bg: #0a0e13;
+  --panel: #10151c;
+  --panel-2: #151b24;
+  --line: #212a36;
+  --line-soft: #1a212b;
+  --text: #d7dde5;
+  --strong: #f1f4f8;
+  --muted: #79828e;
+  --amber: #f2a33c;
+  --amber-soft: rgba(242, 163, 60, .12);
+  --led: #35d17e;
+  --danger: #e5566b;
+  --danger-soft: rgba(229, 86, 107, .12);
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 }
 *, *::before, *::after { box-sizing: border-box; }
 html, body { min-height: 100%; }
 body {
   margin: 0;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
-  background: var(--bg);
+  background:
+    radial-gradient(1100px 320px at 50% -80px, rgba(242, 163, 60, .05), transparent 70%),
+    var(--bg);
   color: var(--text);
+  font: 13px/1.55 var(--sans);
 }
 button, input, select, textarea { font: inherit; color: inherit; }
-a { color: var(--accent); text-decoration: none; }
+a { color: var(--amber); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  height: 52px;
+.uplink {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 16px;
-  background: var(--topbar-bg);
-  color: var(--topbar-fg);
-  border-bottom: 1px solid #16171b;
+  gap: 16px;
+  padding: 13px 22px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
 }
 .brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--topbar-fg);
+  font-family: var(--mono);
+  font-size: 15px;
   font-weight: 600;
-  font-size: 14px;
+  color: var(--strong);
+  letter-spacing: .01em;
 }
 .brand:hover { text-decoration: none; }
-.brand-glyph {
-  width: 26px;
-  height: 26px;
+.brand .tld { color: var(--amber); }
+.uplink .stat {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-}
-.topbar-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 30px;
-  padding: 0 10px;
-  border-radius: var(--radius);
-  background: var(--topbar-pill);
-  border: 1px solid var(--topbar-pill-line);
-  color: var(--topbar-fg);
-  font-size: 12.5px;
-  max-width: min(560px, 52vw);
-}
-.topbar-pill .k { color: var(--topbar-muted); font-size: 11.5px; letter-spacing: .02em; }
-.topbar-pill .v {
+  gap: 7px;
   font-family: var(--mono);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.topbar-spacer { flex: 1; }
-.topbar-meta { color: var(--topbar-muted); font-size: 12px; }
-.topbar-meta b { color: var(--topbar-fg); font-weight: 500; }
-
-.app {
-  flex: 1;
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-}
-.sidebar {
-  border-right: 1px solid var(--line);
-  padding: 14px 8px;
-  background: var(--sidebar-bg);
-}
-.side-section + .side-section { margin-top: 14px; }
-.side-label {
-  padding: 6px 10px 4px;
   font-size: 11.5px;
-  font-weight: 600;
   color: var(--muted);
 }
-.side-item {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-height: 30px;
-  padding: 6px 10px;
-  border-radius: 5px;
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1;
-}
-.side-item:hover { background: rgba(15, 23, 42, 0.05); text-decoration: none; }
-.side-item.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  font-weight: 500;
-}
-.side-item .icon { width: 16px; height: 16px; color: var(--muted); flex: 0 0 auto; }
-.side-item.active .icon { color: var(--accent); }
-.side-item .badge {
-  margin-left: auto;
-  min-width: 22px;
-  text-align: center;
-  font-size: 11px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.08);
-  color: var(--muted);
-  font-weight: 500;
-}
-
-.content {
-  padding: 28px 32px;
-  max-width: 1360px;
-  width: 100%;
-}
-
-.page-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  margin-bottom: 20px;
-}
-.page-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-lg);
-  background: var(--card);
-  border: 1px solid var(--line);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-strong);
-  box-shadow: var(--shadow-sm);
+.uplink .stat b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--led);
+  box-shadow: 0 0 6px var(--led);
   flex: 0 0 auto;
 }
-.page-header-text { flex: 1; min-width: 0; }
-.page-header h1 {
-  margin: 0 0 4px;
-  color: var(--text-strong);
-  font-size: 24px;
-  line-height: 1.15;
-  font-weight: 700;
+@media (prefers-reduced-motion: no-preference) {
+  .led.pulse { animation: led-pulse 2s ease-in-out infinite; }
+  @keyframes led-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .45; }
+  }
 }
-.page-header .lede {
-  margin: 0;
-  max-width: 76ch;
-  color: var(--muted);
-  font-size: 13.5px;
-}
-
-.btn {
+.uplink .sp { flex: 1; }
+.uplink .who { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.uplink .who b { color: var(--text); font-weight: 500; }
+.ghost {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 0 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line-strong);
-  background: var(--card);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: 500 11px/1 var(--mono);
+  padding: 6px 10px;
   cursor: pointer;
+}
+.ghost:hover { color: var(--strong); background: var(--panel-2); text-decoration: none; }
+.ghost.danger:hover { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+.uplink form { margin: 0; display: inline-flex; align-items: center; }
+
+.sect-nav {
+  display: flex;
+  gap: 2px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+}
+.sect-nav a {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: .04em;
+  color: var(--muted);
+  padding: 11px 14px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
   white-space: nowrap;
 }
-.btn:hover { background: var(--bg-soft); text-decoration: none; }
-.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-.btn-primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
-.btn-danger { color: var(--danger); border-color: rgba(199, 52, 68, .35); background: var(--card); }
-.btn-danger:hover { background: var(--danger-soft); }
-.btn-ghost { background: transparent; border-color: transparent; }
-.btn-ghost:hover { background: rgba(15, 23, 42, .06); }
-.btn-sm { min-height: 28px; padding: 0 10px; font-size: 12.5px; }
-.plus { font-size: 14px; line-height: 1; }
+.sect-nav a:hover { color: var(--text); text-decoration: none; }
+.sect-nav a.on { color: var(--amber); border-bottom-color: var(--amber); }
+.sect-nav a .n { color: var(--muted); opacity: .8; }
 
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.main { padding: 26px 22px 60px; max-width: 960px; margin: 0 auto; }
+section { scroll-margin-top: 16px; }
+section + section { margin-top: 38px; }
+.sect-h {
+  display: flex;
+  align-items: baseline;
   gap: 12px;
-  margin-bottom: 16px;
+  margin: 0 0 14px;
 }
-.summary-tile {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  padding: 12px 14px;
-  background: var(--card);
-  box-shadow: var(--shadow-sm);
-}
-.summary-tile .k { color: var(--muted); font-size: 12px; }
-.summary-tile .v { color: var(--text-strong); font-size: 22px; line-height: 1.1; font-weight: 700; }
-
-.card {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-}
-.card + .card { margin-top: 14px; }
-.table-wrap { overflow-x: auto; }
-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-thead th {
-  background: var(--bg-soft);
-  text-align: left;
-  padding: 10px 14px;
+.sect-h h2 {
+  margin: 0;
   font-size: 12px;
   font-weight: 600;
-  color: var(--text-strong);
-  border-bottom: 1px solid var(--line);
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--muted);
   white-space: nowrap;
+}
+.sect-h .rule { flex: 1; height: 1px; background: var(--line-soft); align-self: center; }
+.sect-h .sum { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+.sect-h .sum b { color: var(--led); font-weight: 500; }
+.sect-h .btn { align-self: center; }
+
+.port {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 14px 16px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 4px 14px;
+  align-items: center;
+}
+.port + .port { margin-top: 10px; }
+.port:hover { border-color: #2c3745; }
+.port .jack {
+  grid-row: 1 / 4;
+  grid-column: 1;
+  align-self: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.port .name-row {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.port .pname {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--strong);
   overflow: hidden;
   text-overflow: ellipsis;
-}
-tbody td {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line-soft);
-  font-size: 13px;
-  color: var(--text);
-  vertical-align: middle;
   white-space: nowrap;
+}
+.chip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+.chip.amber { color: var(--amber); border-color: var(--amber); }
+.port .url-row {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.port .url-row a {
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
-tbody tr:last-child td { border-bottom: 0; }
-tbody tr:hover td { background: #fafbfc; }
-.row-title { font-weight: 500; color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.col-actions { text-align: right; }
-td.cell-widget { overflow: visible; }
-.row-actions { display: inline-flex; gap: 4px; justify-content: flex-end; }
-.row-actions form { margin: 0; }
-.icon-btn {
-  width: 28px;
-  height: 28px;
+.port .meta {
+  grid-column: 2;
+  grid-row: 3;
+  display: flex;
+  gap: 16px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+.port .meta b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.port .acts {
+  grid-column: 3;
+  grid-row: 1 / 4;
+  align-self: center;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.port .acts form { margin: 0; display: inline-flex; gap: 6px; align-items: center; }
+.ib {
+  width: 30px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 5px;
-  border: 1px solid transparent;
+  border: 1px solid var(--line);
+  border-radius: 7px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
   padding: 0;
+  flex: 0 0 auto;
 }
-.icon-btn:hover { color: var(--text-strong); background: var(--bg-soft); border-color: var(--line); text-decoration: none; }
-.icon-btn.danger:hover { color: var(--danger); background: var(--danger-soft); border-color: rgba(199, 52, 68, .35); }
-.icon-btn svg { width: 14px; height: 14px; display: block; }
-
-.status {
+.ib:hover { color: var(--strong); background: var(--panel-2); text-decoration: none; }
+.ib.copied { color: var(--led); border-color: var(--led); }
+.ib.danger:hover { color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
+.ib svg { width: 14px; height: 14px; display: block; }
+.confirm {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11.5px;
-  font-weight: 500;
-  background: rgba(15, 23, 42, .05);
-  color: var(--muted);
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--danger);
   white-space: nowrap;
-  min-width: 72px;
 }
-.status::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-.status.active { background: var(--success-soft); color: var(--success); }
-
-.card-header {
-  padding: 16px 14px;
-  border-bottom: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.card-header h2 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-strong);
-}
-.form-inline {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin: 0;
-}
-.form-inline input[type="text"],
-.form-inline select {
+.confirm .cbtn {
+  border: 1px solid var(--danger);
+  background: var(--danger);
+  color: #0a0e13;
+  border-radius: 6px;
+  font: 600 11px/1 var(--mono);
   padding: 6px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  font-size: 13px;
-  min-width: 180px;
-  background: var(--card);
+  cursor: pointer;
 }
-.form-inline label {
+.confirm .xbtn {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  font: 500 11px/1 var(--mono);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.empty {
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 36px 20px;
+  text-align: center;
+}
+.empty h3 { margin: 0 0 4px; font: 600 13px var(--mono); color: var(--strong); }
+.empty p { margin: 0 0 14px; color: var(--muted); font-size: 12px; }
+.cmd {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  max-width: 100%;
+}
+.cmd .p { color: var(--amber); }
+
+.trow {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 12px 16px;
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
+  gap: 14px;
+  flex-wrap: wrap;
 }
-.token-panel {
-  padding: 14px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-soft);
-}
-.token-panel label {
-  display: block;
-  margin: 0 0 6px;
-  color: var(--muted);
-  font-size: 12px;
+.trow + .trow { margin-top: 8px; }
+.trow .tname {
+  font-family: var(--mono);
+  font-size: 12.5px;
   font-weight: 600;
+  color: var(--strong);
+  flex: 1;
+  min-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.token-panel input {
-  width: 100%;
-  min-height: 34px;
-  padding: 7px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--card);
-  color: var(--text-strong);
-  font: 12.5px/1.4 var(--mono);
+.trow .tdate { font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.trow .tdate b { color: var(--text); font-weight: 500; }
+.trow form { margin: 0; display: inline-flex; gap: 6px; align-items: center; }
+
+.token-flash {
+  border: 1px solid var(--amber);
+  background: var(--amber-soft);
+  border-radius: 10px;
+  padding: 13px 16px;
+  margin-bottom: 12px;
 }
+.token-flash .h {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin-bottom: 8px;
+}
+.token-row { display: flex; gap: 8px; align-items: center; }
 .token-meta {
   margin-top: 8px;
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  color: var(--muted);
-  font-size: 12px;
-}
-.token-meta code {
   font-family: var(--mono);
-  color: var(--text-strong);
+  font-size: 11px;
+  color: var(--muted);
 }
+.token-meta code { color: var(--amber); }
+.token-row input {
+  flex: 1;
+  font: 12px/1.4 var(--mono);
+  color: var(--strong);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 11px;
+  min-width: 0;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--text);
+  font: 600 11.5px/1 var(--mono);
+  border-radius: 7px;
+  padding: 8px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { color: var(--strong); text-decoration: none; }
+.btn.primary { background: var(--amber); border-color: var(--amber); color: #14100a; }
+.btn.primary:hover { color: #14100a; filter: brightness(1.06); }
+.btn.copied, .btn.primary.copied { background: var(--led); border-color: var(--led); color: #0a0e13; }
+
+.tbl-wrap {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow-x: auto;
+}
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left;
+  padding: 10px 14px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+td {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+  vertical-align: middle;
+}
+tr:last-child td { border-bottom: 0; }
+td code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  background: var(--panel-2);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.row-title { font-family: var(--mono); font-weight: 600; color: var(--strong); }
+.col-actions { text-align: right; }
+.row-actions { display: inline-flex; gap: 6px; justify-content: flex-end; align-items: center; }
+.row-actions form { margin: 0; display: inline-flex; gap: 6px; align-items: center; }
+.route-count { margin-top: 4px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.tbl-empty { padding: 30px 14px; text-align: center; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+
+.form-inline { display: flex; gap: 8px; align-items: center; margin: 0; flex-wrap: wrap; }
+.form-inline input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+  font: 12px/1.4 var(--mono);
+  color: var(--strong);
+  min-width: 170px;
+}
+.form-inline label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .modal {
   position: fixed;
   inset: 0;
@@ -398,19 +444,17 @@ td.cell-widget { overflow: visible; }
   padding: 20px;
 }
 .modal:target { display: flex; }
-.modal-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(12, 12, 13, .42);
-}
+.modal-backdrop { position: absolute; inset: 0; background: rgba(4, 6, 9, .6); }
 .modal-card {
   position: relative;
   z-index: 1;
-  width: min(420px, 100%);
+  width: min(440px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
   border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--card);
-  box-shadow: 0 18px 48px rgba(15, 23, 42, .18);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .5);
 }
 .modal-header {
   display: flex;
@@ -422,31 +466,34 @@ td.cell-widget { overflow: visible; }
 }
 .modal-header h3 {
   margin: 0;
-  color: var(--text-strong);
-  font-size: 15px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--strong);
 }
-.modal-body {
-  display: grid;
-  gap: 12px;
-  padding: 16px;
-}
+.modal-body { display: grid; gap: 12px; padding: 16px; }
 .field label {
   display: block;
   margin: 0 0 5px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
 }
 .field input,
 .field select,
 .field textarea {
   width: 100%;
-  min-height: 34px;
-  padding: 7px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius);
-  background: var(--card);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 11px;
+  font: 12px/1.4 var(--mono);
+  color: var(--strong);
 }
+.field textarea { resize: vertical; }
 .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -454,471 +501,341 @@ td.cell-widget { overflow: visible; }
   padding: 0 16px 16px;
 }
 
-@media (max-width: 768px) {
-  .app { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+@media (max-width: 640px) {
+  .uplink { gap: 10px; }
+  .port { grid-template-columns: minmax(0, 1fr) auto; }
+  .port .jack { display: none; }
+  .port .name-row, .port .url-row, .port .meta { grid-column: 1; }
+  .port .acts { grid-column: 2; }
 }
 </style>
 </head>
 <body>
-<header class="topbar">
-  <a class="brand" href="/dashboard">
-    <span class="brand-glyph" aria-hidden="true">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-      </svg>
-    </span>
-    rgrok
-  </a>
-  <span class="topbar-pill" title="Configured public base URL">
-    <span class="k">BASE</span>
-    <span class="v">{{.BaseURL}}</span>
-  </span>
-  <span class="topbar-spacer"></span>
-  <span class="topbar-meta">Signed in as <b>{{.Session.Login}}</b>{{if .Session.Admin}} · admin{{end}}</span>
-  <a class="btn btn-sm btn-ghost" href="/logout" style="color:var(--topbar-fg);margin-left:4px;">Sign out</a>
+<header class="uplink">
+  <a class="brand" href="/dashboard">rgrok<span class="tld">://</span></a>
+  <span class="stat"><span class="led pulse"></span> uplink <b>{{.Domain}}</b></span>
+  <span class="stat"><b id="ports-live">{{len .Tunnels}}</b> ports live</span>
+  <span class="sp"></span>
+  <span class="who">{{.Session.Login}}{{if .Session.Admin}} <b>· admin</b>{{end}}</span>
+  <a class="ghost" href="/logout">sign out</a>
+  <form method="post" action="/dashboard/sessions/revoke" data-confirm="revoke all sessions?">
+    <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
+    <button type="submit" class="ghost danger">revoke sessions</button>
+  </form>
 </header>
 
-<div class="app">
-  <aside class="sidebar">
-    <nav class="side-section" aria-label="Main">
-      <div class="side-label">Main</div>
-      <a class="side-item active" href="/dashboard">
-        <span class="icon" aria-hidden="true">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="8" cy="8" r="6.5"/>
-            <path d="M1.5 8h13"/>
-            <path d="M8 1.5c2.5 2 3.5 4.5 3.5 6.5s-1 4.5-3.5 6.5"/>
-            <path d="M8 1.5c-2.5 2-3.5 4.5-3.5 6.5s1 4.5 3.5 6.5"/>
-          </svg>
+<nav class="sect-nav" aria-label="Sections">
+  <a class="on" href="#tunnels">tunnels <span class="n" id="tunnel-count">{{len .Tunnels}}</span></a>
+  <a href="#api-tokens">tokens <span class="n">{{len .APITokens}}</span></a>
+  {{if .Session.Admin}}
+  <a href="#applications">applications <span class="n">{{len .Applications}}</span></a>
+  <a href="#reserved-names">reserved <span class="n">{{len .Reservations}}</span></a>
+  <a href="#users">users <span class="n">{{len .Users}}</span></a>
+  {{end}}
+</nav>
+
+<main class="main">
+  <section id="tunnels">
+    <div class="sect-h">
+      <h2>Tunnels</h2>
+      <span class="rule"></span>
+      <span class="sum" id="tunnels-sum"><b>{{len .Tunnels}} live</b> · {{.TotalRequests}} req</span>
+    </div>
+    <div id="tunnel-list" hx-get="/dashboard/tunnels" hx-trigger="every 5s" hx-swap="innerHTML">
+      {{if .Tunnels}}
+      {{range .Tunnels}}
+      <div class="port">
+        <span class="jack"><span class="led pulse"></span></span>
+        <div class="name-row">
+          <span class="pname">{{.ID}}</span>
+          {{if $.Session.Admin}}<span class="chip">{{.Owner}}</span>{{end}}
+        </div>
+        <span class="acts">
+          <button class="ib" type="button" data-copy="{{.PublicURL}}" title="Copy URL" aria-label="Copy URL">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg>
+          </button>
+          <a class="ib" href="{{.PublicURL}}" target="_blank" rel="noopener" title="Open" aria-label="Open">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8.7V12a1.3 1.3 0 0 1-1.3 1.3H4A1.3 1.3 0 0 1 2.7 12V5.3A1.3 1.3 0 0 1 4 4h3.3"/><path d="M9.5 2.5h4v4"/><path d="M13.2 2.8 7.5 8.5"/></svg>
+          </a>
+          <form method="post" action="/dashboard/tunnels/disconnect" data-confirm="disconnect?">
+            <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <button class="ib danger" type="submit" title="Disconnect" aria-label="Disconnect">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5 12.5 6.5"/><path d="M5 8.5 7.5 11a2.5 2.5 0 0 0 3.5 0l1-1L7.5 5.5l-1 1A2.5 2.5 0 0 0 5 8.5z"/><path d="M2.5 13.5 5.2 10.8"/><path d="M13.5 2.5 11 5"/></svg>
+            </button>
+          </form>
         </span>
-        Tunnels
-        <span class="badge">{{len .Tunnels}}</span>
-      </a>
-      <a class="side-item" href="#api-tokens">
-        <span class="icon" aria-hidden="true">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="5.5" cy="8" r="2.5"/>
-            <path d="M8 8h6"/>
-            <path d="M11 8v2"/>
-            <path d="M13 8v2"/>
-          </svg>
-        </span>
-        API tokens
-      </a>
-      {{if .Session.Admin}}
-	  <a class="side-item" href="#applications">
-		<span class="icon" aria-hidden="true"></span>
-		Applications
-		<span class="badge">{{len .Applications}}</span>
-	  </a>
-      <a class="side-item" href="#reserved-names">
-        <span class="icon" aria-hidden="true"></span>
-        Reserved names
-        <span class="badge">{{len .Reservations}}</span>
-      </a>
-      <a class="side-item" href="#users">
-        <span class="icon" aria-hidden="true">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="8" cy="5.5" r="2.5"/>
-            <path d="M3.5 13.5c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"/>
-          </svg>
-        </span>
-        Users
-        <span class="badge">{{len .Users}}</span>
-      </a>
+        <div class="url-row"><a href="{{.PublicURL}}">{{.PublicURL}}</a></div>
+        <div class="meta">
+          <span>up <b data-connected="{{.ConnectedAt}}">{{.Uptime}}</b></span>
+          <span>req <b>{{.Requests}}</b></span>
+          {{if .LocalPort}}<span>&rarr; localhost:<b>{{.LocalPort}}</b></span>{{end}}
+        </div>
+      </div>
       {{end}}
-    </nav>
-    <nav class="side-section" aria-label="Account">
-      <div class="side-label">Account</div>
-      <a class="side-item" href="/logout">
-        <span class="icon" aria-hidden="true">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M6 3L2 8l4 5"/>
-            <path d="M2 8h9"/>
-            <path d="M10 3v10"/>
-          </svg>
+      {{else}}
+      <div class="empty">
+        <h3>no tunnels connected</h3>
+        <p>Expose a local port &mdash; it appears here the moment it connects.</p>
+        <span class="cmd">
+          <span><span class="p">$</span> rgrok connect 3000 --name demo</span>
+          <button class="ib" type="button" data-copy="rgrok connect 3000 --name demo" title="Copy command" aria-label="Copy command">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg>
+          </button>
         </span>
-        Sign out
-      </a>
-      <form method="post" action="/dashboard/sessions/revoke" style="margin:0">
-        <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
-        <button type="submit" class="side-item" style="width:100%;border:none;background:transparent;cursor:pointer;text-align:left;font:inherit;padding:6px 10px">
-          <span class="icon" aria-hidden="true">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 4l8 8"/>
-              <path d="M12 4l-8 8"/>
-            </svg>
-          </span>
-          Revoke sessions
+      </div>
+      {{end}}
+    </div>
+  </section>
+
+  <section id="api-tokens">
+    <div class="sect-h">
+      <h2>API tokens</h2>
+      <span class="rule"></span>
+      <a href="#create-api-token" class="btn primary">+ new token</a>
+    </div>
+    {{if .CreatedAPIToken}}
+    <div class="token-flash">
+      <div class="h">token created &mdash; copy now, shown once</div>
+      <div class="token-row">
+        <input id="created-api-token" type="text" readonly value="{{.CreatedAPIToken}}">
+        <button class="btn primary" type="button" data-copy="{{.CreatedAPIToken}}">copy</button>
+      </div>
+      <div class="token-meta">{{.CreatedAPITokenName}} &middot; expires {{.CreatedAPITokenExpires.Format "2006-01-02 15:04 UTC"}} &middot; use as <code>RGROK_API_TOKEN</code></div>
+    </div>
+    {{end}}
+    {{if .APITokens}}
+    {{range .APITokens}}
+    <div class="trow">
+      <span class="tname">{{.Name}}</span>
+      <span class="tdate">created <b>{{.CreatedAt.Format "2006-01-02"}}</b></span>
+      <span class="tdate">expires <b>{{.ExpiresAt.Format "2006-01-02"}}</b></span>
+      <form method="post" action="/dashboard/api-tokens/delete" data-confirm="revoke?">
+        <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
+        <input type="hidden" name="token_hash" value="{{.TokenHash}}">
+        <button class="ib danger" type="submit" title="Revoke" aria-label="Revoke">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8"/><path d="M12 4l-8 8"/></svg>
         </button>
       </form>
-    </nav>
-  </aside>
+    </div>
+    {{end}}
+    {{else}}
+    <div class="empty">
+      <h3>no api tokens</h3>
+      <p>Create a token to connect without the browser login flow.</p>
+      <a href="#create-api-token" class="btn primary">+ new token</a>
+    </div>
+    {{end}}
+  </section>
 
-  <main class="content">
-    <header class="page-header">
-      <div class="page-icon" aria-hidden="true">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="10"/>
-          <path d="M2 12h20"/>
-          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-        </svg>
-      </div>
-      <div class="page-header-text">
-        <h1>Tunnels</h1>
-        <p class="lede">Active public tunnels and their endpoints.</p>
-      </div>
-    </header>
-
-    <div class="summary-grid">
-      <div class="summary-tile">
-        <div class="k">Active Tunnels</div>
-        <div class="v" id="tunnel-count">{{len .Tunnels}}</div>
-      </div>
-      {{if .Session.Admin}}
-      <div class="summary-tile">
-        <div class="k">Whitelisted Users</div>
-        <div class="v">{{len .Users}}</div>
-      </div>
+  {{if .Session.Admin}}
+  <section id="applications">
+    <div class="sect-h">
+      <h2>Applications</h2>
+      <span class="rule"></span>
+      <a href="#create-application" class="btn primary">+ new application</a>
+    </div>
+    <div class="tbl-wrap">
+      {{if .Applications}}
+      <table>
+        <thead><tr><th>Name</th><th>Profile ID</th><th>Public key</th><th>Limits</th><th class="col-actions">Actions</th></tr></thead>
+        <tbody>
+          {{range .Applications}}
+          <tr>
+            <td>
+              <div class="row-title">{{.Name}}</div>
+              <div class="route-count">{{len .Routes}} routes</div>
+            </td>
+            <td><code>{{.ID}}</code></td>
+            <td><code>{{.PublicKeyFingerprint}}</code></td>
+            <td>{{.RequestsPerMinute}}/min, burst {{.RequestBurst}}, {{.ConcurrentRequests}} concurrent</td>
+            <td class="col-actions">
+              <div class="row-actions">
+                <a class="ib" href="#edit-application-{{.ID}}" title="Edit" aria-label="Edit">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2.5l3 3-8 8H2.5v-3z"/><path d="M9 4l3 3"/></svg>
+                </a>
+                <form method="post" action="/dashboard/applications/delete" data-confirm="delete?">
+                  <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
+                  <input type="hidden" name="id" value="{{.ID}}">
+                  <button class="ib danger" type="submit" title="Delete" aria-label="Delete">
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8"/><path d="M12 4l-8 8"/></svg>
+                  </button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <div class="tbl-empty">no application profiles</div>
       {{end}}
     </div>
+  </section>
 
-    <section class="card">
-      <div class="table-wrap" id="tunnel-list" hx-get="/dashboard/tunnels" hx-trigger="every 5s" hx-swap="innerHTML">
-        {{if .Tunnels}}
-        <table>
-          <colgroup>
-            <col>
-            <col>
-            {{if .Session.Admin}}<col>{{end}}
-            <col style="width: 100px">
-            <col style="width: 100px">
-          </colgroup>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Public URL</th>
-              {{if .Session.Admin}}<th>Owner</th>{{end}}
-              <th>Status</th>
-              <th class="col-actions">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {{range .Tunnels}}
-            <tr>
-              <td><div class="row-title">{{.ID}}</div></td>
-              <td><a href="{{.PublicURL}}">{{.PublicURL}}</a></td>
-              {{if $.Session.Admin}}<td>{{.Owner}}</td>{{end}}
-              <td class="cell-widget"><span class="status active">active</span></td>
-              <td class="col-actions cell-widget">
-                <div class="row-actions">
-                  <form method="post" action="/dashboard/tunnels/disconnect">
-                    <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
-                    <input type="hidden" name="id" value="{{.ID}}">
-                    <button class="icon-btn danger" type="submit" title="Disconnect" aria-label="Disconnect">
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M2 4h12"/>
-                        <path d="M5 4V2.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V4"/>
-                        <path d="M4.5 4l.6 8a1 1 0 0 0 1 1h4.8a1 1 0 0 0 1-1l.6-8"/>
-                      </svg>
-                    </button>
-                  </form>
-                </div>
-              </td>
-            </tr>
-            {{end}}
-          </tbody>
-        </table>
-        {{else}}
-        <div style="padding: 32px 14px; text-align: center; color: var(--muted);">
-          No active tunnels.
-        </div>
-        {{end}}
-      </div>
-    </section>
-
-    <section class="card" id="api-tokens">
-      <div class="card-header">
-        <h2>API tokens</h2>
-        <a href="#create-api-token" class="btn btn-primary btn-sm"><span class="plus">+</span> Create token</a>
-      </div>
-      {{if .CreatedAPIToken}}
-      <div class="token-panel">
-        <label for="created-api-token">RGROK_API_TOKEN</label>
-        <input id="created-api-token" type="text" readonly value="{{.CreatedAPIToken}}">
-        <div class="token-meta">
-          <span>{{.CreatedAPITokenName}}</span>
-          <span>Expires {{.CreatedAPITokenExpires.Format "2006-01-02 15:04 UTC"}}</span>
-          <span><code>RGROK_API_TOKEN</code></span>
-        </div>
-      </div>
-      {{end}}
-      <div class="table-wrap">
-        {{if .APITokens}}
-        <table>
-          <colgroup><col><col style="width: 190px"><col style="width: 190px"><col style="width: 80px"></colgroup>
-          <thead>
-            <tr><th>Name</th><th>Created</th><th>Expires</th><th class="col-actions">Actions</th></tr>
-          </thead>
-          <tbody>
-            {{range .APITokens}}
-            <tr>
-              <td><div class="row-title">{{.Name}}</div></td>
-              <td>{{.CreatedAt.Format "2006-01-02 15:04 UTC"}}</td>
-              <td>{{.ExpiresAt.Format "2006-01-02 15:04 UTC"}}</td>
-              <td class="col-actions cell-widget">
-                <div class="row-actions">
-                  <form method="post" action="/dashboard/api-tokens/delete">
-                    <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
-                    <input type="hidden" name="token_hash" value="{{.TokenHash}}">
-                    <button class="icon-btn danger" type="submit" title="Revoke" aria-label="Revoke">
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M2 4h12"/>
-                        <path d="M5 4V2.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V4"/>
-                        <path d="M4.5 4l.6 8a1 1 0 0 0 1 1h4.8a1 1 0 0 0 1-1l.6-8"/>
-                      </svg>
-                    </button>
-                  </form>
-                </div>
-              </td>
-            </tr>
-            {{end}}
-          </tbody>
-        </table>
-        {{else}}
-        <div style="padding: 32px 14px; text-align: center; color: var(--muted);">
-          No API tokens.
-        </div>
-        {{end}}
-      </div>
-    </section>
-
-    <div class="modal" id="create-api-token" role="dialog" aria-modal="true" aria-labelledby="create-api-token-title">
-      <a class="modal-backdrop" href="#api-tokens" aria-label="Close"></a>
-      <form method="post" action="/dashboard/api-tokens/create" class="modal-card">
-        <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
-        <div class="modal-header">
-          <h3 id="create-api-token-title">Create API token</h3>
-          <a class="icon-btn" href="#api-tokens" title="Close" aria-label="Close">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-              <path d="M4 4l8 8"/>
-              <path d="M12 4l-8 8"/>
-            </svg>
-          </a>
-        </div>
-        <div class="modal-body">
-          <div class="field">
-            <label for="api-token-name">Name</label>
-            <input id="api-token-name" type="text" name="name" maxlength="80" required>
-          </div>
-          <div class="field">
-            <label for="api-token-expiration">Expires</label>
-            <select id="api-token-expiration" name="expires_in_days">
-              {{range .APITokenOptions}}
-              <option value="{{.Days}}"{{if .Default}} selected{{end}}>{{.Label}}</option>
-              {{end}}
-            </select>
-          </div>
-        </div>
-        <div class="modal-actions">
-          <a class="btn btn-sm" href="#api-tokens">Cancel</a>
-          <button type="submit" class="btn btn-primary btn-sm"><span class="plus">+</span> Create token</button>
-        </div>
-      </form>
+  <section id="reserved-names">
+    <div class="sect-h">
+      <h2>Reserved names</h2>
+      <span class="rule"></span>
     </div>
-
-    {{if .Session.Admin}}
-    <section class="card" id="applications">
-      <div class="card-header">
-        <h2>Application profiles</h2>
-        <a href="#create-application" class="btn btn-primary btn-sm"><span class="plus">+</span> Create application</a>
-      </div>
-      <div class="table-wrap">
-        {{if .Applications}}
-        <table>
-          <thead><tr><th>Name</th><th>Profile ID</th><th>Public key</th><th>Limits</th><th class="col-actions">Actions</th></tr></thead>
-          <tbody>
-            {{range .Applications}}
-            <tr>
-              <td>
-                <div class="row-title">{{.Name}}</div>
-                {{range .Routes}}<div><code>{{range .Methods}}{{.}} {{end}}{{.Path}}</code></div>{{end}}
-              </td>
-              <td><code>{{.ID}}</code></td>
-              <td><code>{{.PublicKeyFingerprint}}</code></td>
-              <td>{{.RequestsPerMinute}}/min, burst {{.RequestBurst}}, {{.ConcurrentRequests}} concurrent</td>
-              <td class="col-actions cell-widget">
-                <div class="row-actions">
-                  <a class="icon-btn" href="#edit-application-{{.ID}}" title="Edit" aria-label="Edit">
-                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M10.5 2.5l3 3-8 8H2.5v-3z"/><path d="M9 4l3 3"/>
-                    </svg>
-                  </a>
-                  <form method="post" action="/dashboard/applications/delete">
-                    <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
-                    <input type="hidden" name="id" value="{{.ID}}">
-                    <button class="icon-btn danger" type="submit" title="Delete" aria-label="Delete">
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M2 4h12"/><path d="M5 4V2.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V4"/><path d="M4.5 4l.6 8a1 1 0 0 0 1 1h4.8a1 1 0 0 0 1-1l.6-8"/>
-                      </svg>
-                    </button>
-                  </form>
-                </div>
-              </td>
-            </tr>
-            {{end}}
-          </tbody>
-        </table>
-        {{else}}
-        <div style="padding: 32px 14px; text-align: center; color: var(--muted);">No application profiles.</div>
-        {{end}}
-      </div>
-    </section>
-
-    <section class="card" id="reserved-names">
-      <div class="card-header">
-        <h2>Reserved names</h2>
-      </div>
-      <div class="table-wrap">
-        {{if .Reservations}}
-        <table>
-          <thead><tr><th>Application</th><th>Reserved name</th><th>Instance ID</th><th>Originally requested</th><th>Last requested</th><th class="col-actions">Actions</th></tr></thead>
-          <tbody>
-            {{range .Reservations}}
-            <tr>
-              <td><div class="row-title">{{.ProfileName}}</div></td>
-              <td><a href="{{.PublicURL}}"><code>{{.TunnelID}}</code></a></td>
-              <td><code>{{.InstanceID}}</code></td>
-              <td>{{.CreatedAt.Format "2006-01-02 15:04 UTC"}}</td>
-              <td>{{.LastUsedAt.Format "2006-01-02 15:04 UTC"}}</td>
-              <td class="col-actions cell-widget">
-                <form method="post" action="/dashboard/applications/reservations/delete">
+    <div class="tbl-wrap">
+      {{if .Reservations}}
+      <table>
+        <thead><tr><th>Application</th><th>Reserved name</th><th>Instance ID</th><th>Originally requested</th><th>Last requested</th><th class="col-actions">Actions</th></tr></thead>
+        <tbody>
+          {{range .Reservations}}
+          <tr>
+            <td><div class="row-title">{{.ProfileName}}</div></td>
+            <td><a href="{{.PublicURL}}"><code>{{.TunnelID}}</code></a></td>
+            <td><code>{{.InstanceID}}</code></td>
+            <td>{{.CreatedAt.Format "2006-01-02 15:04 UTC"}}</td>
+            <td>{{.LastUsedAt.Format "2006-01-02 15:04 UTC"}}</td>
+            <td class="col-actions">
+              <div class="row-actions">
+                <form method="post" action="/dashboard/applications/reservations/delete" data-confirm="unreserve?">
                   <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
                   <input type="hidden" name="profile_id" value="{{.ProfileID}}">
                   <input type="hidden" name="instance_id" value="{{.InstanceID}}">
-                  <button class="btn btn-danger btn-sm" type="submit">Unreserve</button>
+                  <button class="btn" type="submit">unreserve</button>
                 </form>
-              </td>
-            </tr>
-            {{end}}
-          </tbody>
-        </table>
-        {{else}}
-        <div style="padding: 32px 14px; text-align: center; color: var(--muted);">No reserved names.</div>
-        {{end}}
-      </div>
-    </section>
+              </div>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <div class="tbl-empty">no reserved names</div>
+      {{end}}
+    </div>
+  </section>
 
-    <div class="modal" id="create-application" role="dialog" aria-modal="true" aria-labelledby="create-application-title">
-      <a class="modal-backdrop" href="#applications" aria-label="Close"></a>
-      <form method="post" action="/dashboard/applications/create" class="modal-card">
+  <section id="users">
+    <div class="sect-h">
+      <h2>Users</h2>
+      <span class="rule"></span>
+      <form method="post" action="/dashboard/users/add" class="form-inline">
         <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
-        <div class="modal-header">
-          <h3 id="create-application-title">Create application profile</h3>
-          <a class="icon-btn" href="#applications" title="Close" aria-label="Close">×</a>
-        </div>
-        <div class="modal-body">
-          <div class="field"><label for="application-name">Name</label><input id="application-name" name="name" maxlength="80" required></div>
-          <div class="field"><label for="application-public-key">Ed25519 public key</label><textarea id="application-public-key" name="public_key" rows="3" required></textarea></div>
-          <div class="field"><label for="application-routes">Routes, one <code>METHOD[,METHOD] PATH</code> per line</label><textarea id="application-routes" name="routes" rows="8" required></textarea></div>
-          <div class="field"><label for="application-rate">Requests per minute</label><input id="application-rate" type="number" name="requests_per_minute" min="1" value="30" required></div>
-          <div class="field"><label for="application-burst">Request burst</label><input id="application-burst" type="number" name="request_burst" min="1" value="10" required></div>
-          <div class="field"><label for="application-concurrency">Concurrent requests</label><input id="application-concurrency" type="number" name="concurrent_requests" min="1" value="4" required></div>
-        </div>
-        <div class="modal-actions">
-          <a class="btn btn-sm" href="#applications">Cancel</a>
-          <button type="submit" class="btn btn-primary btn-sm"><span class="plus">+</span> Create application</button>
-        </div>
+        <input type="text" name="login" placeholder="github username" required>
+        <label><input type="checkbox" name="admin"> admin</label>
+        <button type="submit" class="btn primary">+ add</button>
       </form>
     </div>
-
-    {{range .Applications}}
-    <div class="modal" id="edit-application-{{.ID}}" role="dialog" aria-modal="true" aria-labelledby="edit-application-title-{{.ID}}">
-      <a class="modal-backdrop" href="#applications" aria-label="Close"></a>
-      <form method="post" action="/dashboard/applications/update" class="modal-card">
+    {{if .Users}}
+    {{range .Users}}
+    <div class="trow">
+      <span class="tname">{{.Login}}</span>
+      {{if .Admin}}<span class="chip amber">admin</span>{{else}}<span class="chip">user</span>{{end}}
+      {{if ne .Login "rselbach"}}
+      <form method="post" action="/dashboard/users/delete" data-confirm="remove?">
         <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
-        <input type="hidden" name="id" value="{{.ID}}">
-        <div class="modal-header">
-          <h3 id="edit-application-title-{{.ID}}">Edit application profile</h3>
-          <a class="icon-btn" href="#applications" title="Close" aria-label="Close">×</a>
-        </div>
-        <div class="modal-body">
-          <div class="field"><label for="application-name-{{.ID}}">Name</label><input id="application-name-{{.ID}}" name="name" maxlength="80" value="{{.Name}}" required></div>
-          <div class="field"><label for="application-public-key-{{.ID}}">Ed25519 public key</label><textarea id="application-public-key-{{.ID}}" name="public_key" rows="3" required>{{.PublicKey}}</textarea></div>
-          <div class="field"><label for="application-routes-{{.ID}}">Routes, one <code>METHOD[,METHOD] PATH</code> per line</label><textarea id="application-routes-{{.ID}}" name="routes" rows="8" required>{{.RoutesText}}</textarea></div>
-          <div class="field"><label for="application-rate-{{.ID}}">Requests per minute</label><input id="application-rate-{{.ID}}" type="number" name="requests_per_minute" min="1" value="{{.RequestsPerMinute}}" required></div>
-          <div class="field"><label for="application-burst-{{.ID}}">Request burst</label><input id="application-burst-{{.ID}}" type="number" name="request_burst" min="1" value="{{.RequestBurst}}" required></div>
-          <div class="field"><label for="application-concurrency-{{.ID}}">Concurrent requests</label><input id="application-concurrency-{{.ID}}" type="number" name="concurrent_requests" min="1" value="{{.ConcurrentRequests}}" required></div>
-        </div>
-        <div class="modal-actions">
-          <a class="btn btn-sm" href="#applications">Cancel</a>
-          <button type="submit" class="btn btn-primary btn-sm">Save changes</button>
-        </div>
+        <input type="hidden" name="login" value="{{.Login}}">
+        <button class="ib danger" type="submit" title="Remove" aria-label="Remove">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8"/><path d="M12 4l-8 8"/></svg>
+        </button>
       </form>
+      {{end}}
     </div>
     {{end}}
-
-    <section class="card" id="users">
-      <div class="card-header">
-        <h2>Whitelist</h2>
-        <form method="post" action="/dashboard/users/add" class="form-inline">
-          <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
-          <input type="text" name="login" placeholder="GitHub username" required>
-          <label><input type="checkbox" name="admin"> Admin</label>
-          <button type="submit" class="btn btn-primary btn-sm"><span class="plus">+</span> Add user</button>
-        </form>
-      </div>
-      <div class="table-wrap">
-        {{if .Users}}
-        <table>
-          <colgroup><col><col style="width: 120px"><col style="width: 100px"></colgroup>
-          <thead>
-            <tr><th>User</th><th>Role</th><th class="col-actions">Actions</th></tr>
-          </thead>
-          <tbody>
-            {{range .Users}}
-            <tr>
-              <td><div class="row-title">{{.Login}}</div></td>
-              <td class="cell-widget">
-                {{if .Admin}}
-                <span class="status" style="background:var(--accent-soft); color:var(--accent);">admin</span>
-                {{else}}
-                <span class="status" style="background:rgba(15,23,42,.05); color:var(--muted-2);">user</span>
-                {{end}}
-              </td>
-              <td class="col-actions cell-widget">
-                <div class="row-actions">
-                  {{if ne .Login "rselbach"}}
-                  <form method="post" action="/dashboard/users/delete">
-                    <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
-                    <input type="hidden" name="login" value="{{.Login}}">
-                    <button class="icon-btn danger" type="submit" title="Remove" aria-label="Remove">
-                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M2 4h12"/>
-                        <path d="M5 4V2.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V4"/>
-                        <path d="M4.5 4l.6 8a1 1 0 0 0 1 1h4.8a1 1 0 0 0 1-1l.6-8"/>
-                      </svg>
-                    </button>
-                  </form>
-                  {{end}}
-                </div>
-              </td>
-            </tr>
-            {{end}}
-          </tbody>
-        </table>
-        {{else}}
-        <div style="padding: 32px 14px; text-align: center; color: var(--muted);">
-          No whitelisted users.
-        </div>
-        {{end}}
-      </div>
-    </section>
+    {{else}}
+    <div class="empty">
+      <h3>no whitelisted users</h3>
+      <p>Add a GitHub username above to grant access.</p>
+    </div>
     {{end}}
-  </main>
+  </section>
+  {{end}}
+</main>
+
+<div class="modal" id="create-api-token" role="dialog" aria-modal="true" aria-labelledby="create-api-token-title">
+  <a class="modal-backdrop" href="#api-tokens" aria-label="Close"></a>
+  <form method="post" action="/dashboard/api-tokens/create" class="modal-card">
+    <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
+    <div class="modal-header">
+      <h3 id="create-api-token-title">new api token</h3>
+      <a class="ib" href="#api-tokens" title="Close" aria-label="Close">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4l8 8"/><path d="M12 4l-8 8"/></svg>
+      </a>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="api-token-name">Name</label>
+        <input id="api-token-name" type="text" name="name" maxlength="80" required>
+      </div>
+      <div class="field">
+        <label for="api-token-expiration">Expires</label>
+        <select id="api-token-expiration" name="expires_in_days">
+          {{range .APITokenOptions}}
+          <option value="{{.Days}}"{{if .Default}} selected{{end}}>{{.Label}}</option>
+          {{end}}
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <a class="btn" href="#api-tokens">cancel</a>
+      <button type="submit" class="btn primary">create</button>
+    </div>
+  </form>
 </div>
+
+{{if .Session.Admin}}
+<div class="modal" id="create-application" role="dialog" aria-modal="true" aria-labelledby="create-application-title">
+  <a class="modal-backdrop" href="#applications" aria-label="Close"></a>
+  <form method="post" action="/dashboard/applications/create" class="modal-card">
+    <input type="hidden" name="csrf_token" value="{{.Session.CSRFToken}}">
+    <div class="modal-header">
+      <h3 id="create-application-title">new application profile</h3>
+      <a class="ib" href="#applications" title="Close" aria-label="Close">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4l8 8"/><path d="M12 4l-8 8"/></svg>
+      </a>
+    </div>
+    <div class="modal-body">
+      <div class="field"><label for="application-name">Name</label><input id="application-name" name="name" maxlength="80" required></div>
+      <div class="field"><label for="application-public-key">Ed25519 public key</label><textarea id="application-public-key" name="public_key" rows="3" required></textarea></div>
+      <div class="field"><label for="application-routes">Routes, one <code>METHOD[,METHOD] PATH</code> per line</label><textarea id="application-routes" name="routes" rows="8" required></textarea></div>
+      <div class="field"><label for="application-rate">Requests per minute</label><input id="application-rate" type="number" name="requests_per_minute" min="1" value="30" required></div>
+      <div class="field"><label for="application-burst">Request burst</label><input id="application-burst" type="number" name="request_burst" min="1" value="10" required></div>
+      <div class="field"><label for="application-concurrency">Concurrent requests</label><input id="application-concurrency" type="number" name="concurrent_requests" min="1" value="4" required></div>
+    </div>
+    <div class="modal-actions">
+      <a class="btn" href="#applications">cancel</a>
+      <button type="submit" class="btn primary">create</button>
+    </div>
+  </form>
+</div>
+
+{{range .Applications}}
+<div class="modal" id="edit-application-{{.ID}}" role="dialog" aria-modal="true" aria-labelledby="edit-application-title-{{.ID}}">
+  <a class="modal-backdrop" href="#applications" aria-label="Close"></a>
+  <form method="post" action="/dashboard/applications/update" class="modal-card">
+    <input type="hidden" name="csrf_token" value="{{$.Session.CSRFToken}}">
+    <input type="hidden" name="id" value="{{.ID}}">
+    <div class="modal-header">
+      <h3 id="edit-application-title-{{.ID}}">edit application profile</h3>
+      <a class="ib" href="#applications" title="Close" aria-label="Close">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 4l8 8"/><path d="M12 4l-8 8"/></svg>
+      </a>
+    </div>
+    <div class="modal-body">
+      <div class="field"><label for="application-name-{{.ID}}">Name</label><input id="application-name-{{.ID}}" name="name" maxlength="80" value="{{.Name}}" required></div>
+      <div class="field"><label for="application-public-key-{{.ID}}">Ed25519 public key</label><textarea id="application-public-key-{{.ID}}" name="public_key" rows="3" required>{{.PublicKey}}</textarea></div>
+      <div class="field"><label for="application-routes-{{.ID}}">Routes, one <code>METHOD[,METHOD] PATH</code> per line</label><textarea id="application-routes-{{.ID}}" name="routes" rows="8" required>{{.RoutesText}}</textarea></div>
+      <div class="field"><label for="application-rate-{{.ID}}">Requests per minute</label><input id="application-rate-{{.ID}}" type="number" name="requests_per_minute" min="1" value="{{.RequestsPerMinute}}" required></div>
+      <div class="field"><label for="application-burst-{{.ID}}">Request burst</label><input id="application-burst-{{.ID}}" type="number" name="request_burst" min="1" value="{{.RequestBurst}}" required></div>
+      <div class="field"><label for="application-concurrency-{{.ID}}">Concurrent requests</label><input id="application-concurrency-{{.ID}}" type="number" name="concurrent_requests" min="1" value="{{.ConcurrentRequests}}" required></div>
+    </div>
+    <div class="modal-actions">
+      <a class="btn" href="#applications">cancel</a>
+      <button type="submit" class="btn primary">save</button>
+    </div>
+  </form>
+</div>
+{{end}}
+{{end}}
+
 <script src="https://unpkg.com/htmx.org@2"></script>
+<script src="/dashboard/app.js" defer></script>
 </body>
 </html>

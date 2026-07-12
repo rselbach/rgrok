@@ -93,6 +93,9 @@ type tunnel struct {
 	host                 string
 	publicURL            string
 	owner                string
+	localPort            int
+	connectedAt          time.Time
+	requests             atomic.Int64
 	applicationProfileID string
 	instanceID           string
 	routes               []StoredApplicationRoute
@@ -179,6 +182,7 @@ func (s *Server) Run() error {
 	mux.HandleFunc("/auth/github/callback", s.baseHostOnly(s.handleGitHubCallback))
 	mux.HandleFunc("/logout", s.baseHostOnly(s.handleLogout))
 	mux.HandleFunc("/dashboard", s.baseHostOnly(s.handleDashboard))
+	mux.HandleFunc("/dashboard/app.js", s.baseHostOnly(s.handleDashboardJS))
 	mux.HandleFunc("/dashboard/tunnels", s.baseHostOnly(s.handleDashboardTunnels))
 	mux.HandleFunc("/dashboard/api-tokens/create", s.baseHostOnly(s.requirePost(s.handleCreateAPIToken)))
 	mux.HandleFunc("/dashboard/api-tokens/delete", s.baseHostOnly(s.requirePost(s.handleDeleteAPIToken)))
@@ -379,14 +383,16 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 	host := id + "." + s.cfg.Domain
 	t := &tunnel{
-		id:        id,
-		host:      host,
-		publicURL: s.cfg.PublicScheme + "://" + host,
-		owner:     owner,
-		conn:      conn,
-		send:      make(chan protocol.Message, sendChannelSize),
-		done:      make(chan struct{}),
-		pending:   make(map[uint64]chan protocol.Message),
+		id:          id,
+		host:        host,
+		publicURL:   s.cfg.PublicScheme + "://" + host,
+		owner:       owner,
+		localPort:   reg.LocalPort,
+		connectedAt: time.Now().UTC(),
+		conn:        conn,
+		send:        make(chan protocol.Message, sendChannelSize),
+		done:        make(chan struct{}),
+		pending:     make(map[uint64]chan protocol.Message),
 	}
 	if profile == nil {
 		t.requestSlots = make(chan struct{}, s.maxRequestsPerTunnel())
@@ -478,6 +484,7 @@ func (s *Server) handlePublic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer t.releaseRequestSlot()
+	t.requests.Add(1)
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes))
 	if err != nil {
