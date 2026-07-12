@@ -47,8 +47,13 @@ Create a GitHub OAuth app with:
 Run the rgrok server on a private local port:
 
 ```sh
-rgrok server --addr 127.0.0.1:7000 --domain rgrok.rselbach.com --scheme https --data /var/lib/rgrok/rgrok.json --github-client-id "$RGROK_GITHUB_CLIENT_ID" --github-client-secret "$RGROK_GITHUB_CLIENT_SECRET"
+rgrok server --addr 127.0.0.1:7000 --domain rgrok.rselbach.com --scheme https --behind-proxy --data /var/lib/rgrok/rgrok.json --github-client-id "$RGROK_GITHUB_CLIENT_ID" --github-client-secret "$RGROK_GITHUB_CLIENT_SECRET"
 ```
+
+`--behind-proxy` makes the server trust `X-Forwarded-*` headers from the
+proxy so rate limiting and forwarded headers see real client addresses. The
+trusted proxy addresses default to loopback; adjust with
+`--trusted-proxy-cidrs` if Caddy runs elsewhere.
 
 Use a Caddy site that forwards the apex and wildcard tunnel hosts:
 
