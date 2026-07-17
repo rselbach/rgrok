@@ -66,6 +66,45 @@ func TestNewSetsDefaultMaxConcurrentRequests(t *testing.T) {
 	r.Equal(maxConcurrentRequestsDefault, c.cfg.MaxConcurrentRequests)
 }
 
+func TestHandleRequestDoesNotFollowRedirects(t *testing.T) {
+	r := require.New(t)
+	followed := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/redirect":
+			http.Redirect(w, req, "/destination", http.StatusFound)
+		case "/destination":
+			followed = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer srv.Close()
+
+	u, err := url.Parse(srv.URL)
+	r.NoError(err)
+	host, portValue, err := net.SplitHostPort(u.Host)
+	r.NoError(err)
+	port, err := strconv.Atoi(portValue)
+	r.NoError(err)
+
+	c := New(Config{LocalHost: host, LocalPort: port})
+	send := make(chan protocol.Message, 1)
+	done := make(chan struct{})
+	c.handleRequest(protocol.Message{
+		Type:     protocol.TypeRequest,
+		StreamID: 1,
+		Method:   http.MethodGet,
+		Path:     "/redirect",
+	}, send, done)
+
+	resp := <-send
+	r.False(followed)
+	r.Equal(http.StatusFound, resp.StatusCode)
+	r.Equal("/destination", resp.Header.Get("Location"))
+}
+
 func TestSendBusyResponse(t *testing.T) {
 	r := require.New(t)
 	c := New(Config{})
